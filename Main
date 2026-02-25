@@ -413,6 +413,74 @@ final class GGW_Free_Gift_Campaigns {
         return 0;
     }
 
+    private static function get_available_gift_variations($gift_parent_id) {
+        $gift_parent_id = absint($gift_parent_id);
+        if (!$gift_parent_id) return [];
+
+        $parent = wc_get_product($gift_parent_id);
+        if (!$parent || !$parent->is_type('variable')) return [];
+
+        $out = [];
+        foreach ($parent->get_children() as $variation_id) {
+            $variation = wc_get_product($variation_id);
+            if (!$variation || !$variation->is_type('variation')) continue;
+            if (!$variation->is_purchasable() || !$variation->is_in_stock()) continue;
+
+            $attrs = $variation->get_variation_attributes();
+            $label_parts = [];
+            foreach ($attrs as $attr_key => $attr_value) {
+                if ($attr_value === '') continue;
+                $tax = str_replace('attribute_', '', (string)$attr_key);
+                $name = wc_attribute_label($tax, $parent);
+                if (taxonomy_exists($tax)) {
+                    $term = get_term_by('slug', $attr_value, $tax);
+                    $pretty = $term ? $term->name : $attr_value;
+                } else {
+                    $pretty = $attr_value;
+                }
+                $label_parts[] = trim($name . ': ' . $pretty);
+            }
+
+            $out[] = [
+                'id' => $variation->get_id(),
+                'attributes' => $attrs,
+                'label' => !empty($label_parts) ? implode(', ', $label_parts) : sprintf(__('Variant #%d', 'ggw'), $variation->get_id()),
+            ];
+        }
+
+        return $out;
+    }
+
+    private static function validate_gift_choice($campaign, $gift_parent_id, $gift_variation_id = 0) {
+        $gift_parent_id = absint($gift_parent_id);
+        $gift_variation_id = absint($gift_variation_id);
+        if (!$gift_parent_id) return false;
+        if (!in_array($gift_parent_id, $campaign['gift_products'], true)) return false;
+
+        $gift_parent = wc_get_product($gift_parent_id);
+        if (!$gift_parent || !$gift_parent->is_purchasable() || !$gift_parent->is_in_stock()) return false;
+
+        if ($gift_variation_id > 0) {
+            $variation = wc_get_product($gift_variation_id);
+            if (!$variation || !$variation->is_type('variation')) return false;
+            if (intval($variation->get_parent_id()) !== $gift_parent_id) return false;
+            if (!$variation->is_purchasable() || !$variation->is_in_stock()) return false;
+        } else if ($gift_parent->is_type('variable')) {
+            return false;
+        }
+
+        return true;
+    }
+
+    private static function get_variation_attributes_for_cart($gift_variation_id) {
+        $gift_variation_id = absint($gift_variation_id);
+        if (!$gift_variation_id) return [];
+
+        $variation = wc_get_product($gift_variation_id);
+        if (!$variation || !$variation->is_type('variation')) return [];
+        return $variation->get_variation_attributes();
+    }
+
     /* =========================
      * PRODUCT PAGE UI
      * ========================= */
@@ -447,6 +515,25 @@ final class GGW_Free_Gift_Campaigns {
             }
             echo '</select>';
 
+            foreach ($gift_ids as $gid) {
+                $gp = wc_get_product($gid);
+                if (!$gp || !$gp->is_type('variable')) continue;
+                $variations = self::get_available_gift_variations($gid);
+                if (empty($variations)) continue;
+
+                echo '<div class="ggw-gift-variation-wrap" data-gift-id="' . esc_attr($gid) . '" style="display:none;margin-top:8px;">';
+                echo '<label for="ggw_gift_variation_' . esc_attr($gid) . '" style="display:block;font-size:12px;margin-bottom:4px;">Velg variant</label>';
+                echo '<select id="ggw_gift_variation_' . esc_attr($gid) . '" name="ggw_gift_variation_id[' . esc_attr($gid) . ']" style="width:100%;max-width:360px;">';
+                echo '<option value="">Velg variant</option>';
+                foreach ($variations as $variation_row) {
+                    echo '<option value="' . esc_attr($variation_row['id']) . '">' . esc_html($variation_row['label']) . '</option>';
+                }
+                echo '</select>';
+                echo '</div>';
+            }
+
+            echo '<script>(function(){var giftSelect=document.getElementById("ggw_gift_product");if(!giftSelect){return;}var wraps=document.querySelectorAll(".ggw-gift-variation-wrap");var update=function(){var selected=giftSelect.value;wraps.forEach(function(w){w.style.display=(w.getAttribute("data-gift-id")===selected)?"block":"none";});};giftSelect.addEventListener("change",update);update();})();</script>';
+
             echo '<input type="hidden" name="ggw_campaign_id" value="' . esc_attr($campaign['id']) . '">';
             echo '<p style="font-size:12px;color:#6b7280;margin-top:6px;">Gaven valideres i handlekurv/checkout.</p>';
         } else {
@@ -475,11 +562,14 @@ final class GGW_Free_Gift_Campaigns {
         // Required choice validation
         if (!empty($campaign['require_choice']) && empty($campaign['auto_gift'])) {
             $gift_id = absint($_POST['ggw_gift_product'] ?? 0);
+            $gift_variation_map = $_POST['ggw_gift_variation_id'] ?? [];
+            if (!is_array($gift_variation_map)) $gift_variation_map = [];
+            $gift_variation_id = absint($gift_variation_map[$gift_id] ?? 0);
             if (!$gift_id) {
                 wc_add_notice(__('Velg en gratis gave før du legger i handlekurven.', 'ggw'), 'error');
                 return false;
             }
-            if (!in_array($gift_id, $campaign['gift_products'], true) || !self::gift_product_is_available($gift_id)) {
+            if (!self::validate_gift_choice($campaign, $gift_id, $gift_variation_id)) {
                 wc_add_notice(__('Valgt gave er ikke tilgjengelig. Velg en annen gave.', 'ggw'), 'error');
                 return false;
             }
@@ -497,8 +587,15 @@ final class GGW_Free_Gift_Campaigns {
         $cart_item_data['_ggw_trigger_parent'] = self::product_parent_id($target_id);
 
         $selected_gift = absint($_POST['ggw_gift_product'] ?? 0);
-        if ($selected_gift && in_array($selected_gift, $campaign['gift_products'], true)) {
+        $gift_variation_map = $_POST['ggw_gift_variation_id'] ?? [];
+        if (!is_array($gift_variation_map)) $gift_variation_map = [];
+        $selected_variation = absint($gift_variation_map[$selected_gift] ?? 0);
+
+        if (self::validate_gift_choice($campaign, $selected_gift, $selected_variation)) {
             $cart_item_data['_ggw_selected_gift'] = $selected_gift;
+            if ($selected_variation > 0) {
+                $cart_item_data['_ggw_selected_gift_variation'] = $selected_variation;
+            }
         }
         return $cart_item_data;
     }
@@ -567,6 +664,7 @@ final class GGW_Free_Gift_Campaigns {
                     'qty' => 0,
                     'subtotal' => 0.0,
                     'selected_gifts' => [],
+                    'selected_gift_variations' => [],
                     'trigger_keys' => [],
                 ];
             }
@@ -578,7 +676,14 @@ final class GGW_Free_Gift_Campaigns {
             $triggers[$campaign['id']]['trigger_keys'][] = $key;
 
             if (!empty($item['_ggw_selected_gift'])) {
-                $triggers[$campaign['id']]['selected_gifts'][] = absint($item['_ggw_selected_gift']);
+                $gift_parent = absint($item['_ggw_selected_gift']);
+                $gift_variation = absint($item['_ggw_selected_gift_variation'] ?? 0);
+                $gift_key = $gift_parent . ':' . $gift_variation;
+                $triggers[$campaign['id']]['selected_gifts'][] = $gift_key;
+                $triggers[$campaign['id']]['selected_gift_variations'][$gift_key] = [
+                    'gift_parent_id' => $gift_parent,
+                    'gift_variation_id' => $gift_variation,
+                ];
             }
         }
 
@@ -598,12 +703,19 @@ final class GGW_Free_Gift_Campaigns {
             $entitled = min(intval($c['max_gifts_per_order']), intval($c['gifts_to_choose']));
             if ($entitled < 1) continue;
 
-            $selected = array_values(array_filter(array_unique(array_map('absint', $info['selected_gifts']))));
+            $selected = array_values(array_unique($info['selected_gifts']));
 
             // auto-gift if needed
             if (empty($selected) && !empty($c['auto_gift'])) {
                 $first = self::first_available_gift($c);
-                if ($first) $selected[] = $first;
+                if ($first) {
+                    $auto_key = $first . ':0';
+                    $selected[] = $auto_key;
+                    $info['selected_gift_variations'][$auto_key] = [
+                        'gift_parent_id' => $first,
+                        'gift_variation_id' => 0,
+                    ];
+                }
             }
 
             // If still empty and required choice => wait for fallback in checkout/cart notice
@@ -611,14 +723,18 @@ final class GGW_Free_Gift_Campaigns {
 
             $selected = array_slice($selected, 0, $entitled);
 
-            foreach ($selected as $gift_id) {
-                if (!in_array($gift_id, $c['gift_products'], true)) continue;
-                if (!self::gift_product_is_available($gift_id)) continue;
+            foreach ($selected as $gift_key) {
+                $gift_parent_id = absint($info['selected_gift_variations'][$gift_key]['gift_parent_id'] ?? 0);
+                $gift_variation_id = absint($info['selected_gift_variations'][$gift_key]['gift_variation_id'] ?? 0);
+                if (!self::validate_gift_choice($c, $gift_parent_id, $gift_variation_id)) continue;
+                $variation_attributes = $gift_variation_id ? self::get_variation_attributes_for_cart($gift_variation_id) : [];
 
                 // Check if gift already exists for campaign + gift product
                 $exists_key = null;
                 foreach ($gift_lines as $gk => $gitem) {
-                    if (($gitem['_ggw_campaign_id'] ?? '') === $cid && intval($gitem['product_id']) === intval($gift_id)) {
+                    if (($gitem['_ggw_campaign_id'] ?? '') === $cid
+                        && intval($gitem['product_id']) === $gift_parent_id
+                        && intval($gitem['variation_id'] ?? 0) === $gift_variation_id) {
                         $exists_key = $gk; break;
                     }
                 }
@@ -636,7 +752,7 @@ final class GGW_Free_Gift_Campaigns {
                         '_ggw_trigger_key' => $trigger_ref ?: '',
                         '_ggw_label' => 'Gratis gave',
                     ];
-                    $new_key = $cart->add_to_cart($gift_id, 1, 0, [], $add_data);
+                    $new_key = $cart->add_to_cart($gift_parent_id, 1, $gift_variation_id, $variation_attributes, $add_data);
                     if ($new_key && isset($cart->cart_contents[$new_key]['data'])) {
                         $cart->cart_contents[$new_key]['data']->set_price(0);
                     }
@@ -647,12 +763,13 @@ final class GGW_Free_Gift_Campaigns {
         // Remove orphan gifts / invalid gifts
         foreach ($gift_lines as $gk => $gitem) {
             $cid = $gitem['_ggw_campaign_id'] ?? '';
-            $gift_pid = intval($gitem['product_id'] ?? 0);
+            $gift_parent_id = intval($gitem['product_id'] ?? 0);
+            $gift_variation_id = intval($gitem['variation_id'] ?? 0);
             $valid = false;
 
             if ($cid && isset($triggers[$cid])) {
                 $c = $triggers[$cid]['campaign'];
-                if (self::campaign_active_now($c) && in_array($gift_pid, $c['gift_products'], true) && self::gift_product_is_available($gift_pid)) {
+                if (self::campaign_active_now($c) && self::validate_gift_choice($c, $gift_parent_id, $gift_variation_id)) {
                     $valid = true;
                 }
             }
@@ -755,8 +872,22 @@ final class GGW_Free_Gift_Campaigns {
                 echo '<input type="radio" name="ggw_checkout_gift[' . esc_attr($cid) . ']" value="' . esc_attr($gid) . '"> ';
                 echo esc_html($gp->get_name());
                 echo '</label>';
+
+                if ($gp->is_type('variable')) {
+                    $variations = self::get_available_gift_variations($gid);
+                    if (empty($variations)) continue;
+                    echo '<div class="ggw-checkout-variation-wrap" data-campaign-id="' . esc_attr($cid) . '" data-gift-id="' . esc_attr($gid) . '" style="display:none;margin:4px 0 8px 24px;">';
+                    echo '<select name="ggw_checkout_gift_variation[' . esc_attr($cid) . '][' . esc_attr($gid) . ']" style="max-width:320px;">';
+                    echo '<option value="">Velg variant</option>';
+                    foreach ($variations as $variation_row) {
+                        echo '<option value="' . esc_attr($variation_row['id']) . '">' . esc_html($variation_row['label']) . '</option>';
+                    }
+                    echo '</select>';
+                    echo '</div>';
+                }
             }
         }
+        echo '<script>(function(){var radios=document.querySelectorAll("input[name^=\"ggw_checkout_gift\"]");var wraps=document.querySelectorAll(".ggw-checkout-variation-wrap");if(!radios.length||!wraps.length){return;}var update=function(){wraps.forEach(function(w){var cid=w.getAttribute("data-campaign-id");var gid=w.getAttribute("data-gift-id");var active=document.querySelector("input[name=\"ggw_checkout_gift["+cid+"]\"][value=\""+gid+"\"]");w.style.display=(active&&active.checked)?"block":"none";});};radios.forEach(function(r){r.addEventListener("change",update);});update();})();</script>';
         echo '</div>';
     }
 
@@ -765,37 +896,90 @@ final class GGW_Free_Gift_Campaigns {
         if (empty($missing)) return;
 
         $posted = $_POST['ggw_checkout_gift'] ?? [];
+        $posted_variations = $_POST['ggw_checkout_gift_variation'] ?? [];
         if (!is_array($posted)) $posted = [];
+        if (!is_array($posted_variations)) $posted_variations = [];
 
         foreach ($missing as $cid => $row) {
             $gift = absint($posted[$cid] ?? 0);
+            $gift_variation = absint($posted_variations[$cid][$gift] ?? 0);
             if (!$gift) {
                 wc_add_notice(__('Velg gratis gave før betaling.', 'ggw'), 'error');
                 continue;
             }
             if (!in_array($gift, $row['gifts'], true)) {
                 wc_add_notice(__('Valgt gave er ikke gyldig. Velg på nytt.', 'ggw'), 'error');
+                continue;
+            }
+            if (!self::validate_gift_choice($row['campaign'], $gift, $gift_variation)) {
+                wc_add_notice(__('Valgt gavevariant er ikke gyldig. Velg på nytt.', 'ggw'), 'error');
             }
         }
     }
 
     public static function checkout_apply_fallback_choice($order_id) {
-        // Legger valgt gave i cart før ordre vanligvis er best praksis,
-        // men i checkout fallback gjør vi minimumsvariant:
-        // valget lagres på ordrenotat for sporbarhet hvis gave manglet i cart.
         $posted = $_POST['ggw_checkout_gift'] ?? [];
-        if (!is_array($posted) || empty($posted)) return;
+        $posted_variations = $_POST['ggw_checkout_gift_variation'] ?? [];
+        $missing = self::campaigns_missing_gift_in_cart();
+        if (!is_array($posted) || empty($posted) || empty($missing)) return;
+        if (!is_array($posted_variations)) $posted_variations = [];
+
+        $cart = WC()->cart;
+        $existing_gifts = [];
+        if ($cart && !$cart->is_empty()) {
+            foreach ($cart->get_cart() as $item) {
+                if (empty($item['_ggw_is_gift'])) continue;
+                $existing_gifts[] = [
+                    'campaign_id' => sanitize_text_field($item['_ggw_campaign_id'] ?? ''),
+                    'gift_parent_id' => absint($item['product_id'] ?? 0),
+                    'gift_variation_id' => absint($item['variation_id'] ?? 0),
+                ];
+            }
+        }
 
         $human = [];
+        $stored = [];
         foreach ($posted as $cid => $gid) {
             $cid = sanitize_text_field($cid);
-            $gid = absint($gid);
-            if (!$cid || !$gid) continue;
-            $p = wc_get_product($gid);
-            $human[] = $cid . ': ' . ($p ? $p->get_name() : $gid);
+            $gift_parent_id = absint($gid);
+            $gift_variation_id = absint($posted_variations[$cid][$gift_parent_id] ?? 0);
+            if (!$cid || !$gift_parent_id || empty($missing[$cid])) continue;
+            if (!self::validate_gift_choice($missing[$cid]['campaign'], $gift_parent_id, $gift_variation_id)) continue;
+
+            $already_exists = false;
+            foreach ($existing_gifts as $gift_line) {
+                if ($gift_line['campaign_id'] === $cid
+                    && $gift_line['gift_parent_id'] === $gift_parent_id
+                    && $gift_line['gift_variation_id'] === $gift_variation_id) {
+                    $already_exists = true;
+                    break;
+                }
+            }
+
+            if (!$already_exists && $cart) {
+                $variation_attributes = $gift_variation_id ? self::get_variation_attributes_for_cart($gift_variation_id) : [];
+                $add_data = [
+                    '_ggw_is_gift' => 1,
+                    '_ggw_campaign_id' => $cid,
+                    '_ggw_trigger_key' => 'checkout_fallback',
+                    '_ggw_label' => 'Gratis gave',
+                ];
+                $added_key = $cart->add_to_cart($gift_parent_id, 1, $gift_variation_id, $variation_attributes, $add_data);
+                if ($added_key && isset($cart->cart_contents[$added_key]['data'])) {
+                    $cart->cart_contents[$added_key]['data']->set_price(0);
+                }
+            }
+
+            $gift_product = wc_get_product($gift_variation_id ?: $gift_parent_id);
+            $human[] = $cid . ': ' . ($gift_product ? $gift_product->get_name() : $gift_parent_id);
+            $stored[$cid] = [
+                'gift_parent_id' => $gift_parent_id,
+                'gift_variation_id' => $gift_variation_id,
+            ];
         }
-        if (!empty($human)) {
-            update_post_meta($order_id, '_ggw_checkout_selected_gifts', $posted);
+
+        if (!empty($human) && !empty($stored)) {
+            update_post_meta($order_id, '_ggw_checkout_selected_gifts', $stored);
             $order = wc_get_order($order_id);
             if ($order) $order->add_order_note('Gratis gave valgt i checkout fallback: ' . implode(' | ', $human));
         }
