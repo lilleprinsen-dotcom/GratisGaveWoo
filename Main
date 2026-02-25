@@ -151,6 +151,10 @@ final class GGW_Free_Gift_Campaigns {
             'description' => 'Legg i handlekurv. Velg gave. Kjøp trygt ✨',
             'badge' => 'Fordel inkludert',
             'cta' => 'Velg gave',
+            'gift_image_layout' => 'compact',
+            'gift_image_custom_min_width' => 120,
+            'gift_image_custom_aspect_ratio' => '1/1',
+            'gift_image_custom_max_grid_width' => 560,
         ];
         $c = wp_parse_args($c, $defaults);
 
@@ -180,7 +184,98 @@ final class GGW_Free_Gift_Campaigns {
         $c['max_gifts_per_order'] = max(1, intval($c['max_gifts_per_order']));
         $c['max_per_customer'] = max(0, intval($c['max_per_customer']));
         $c['min_subtotal'] = max(0, floatval($c['min_subtotal']));
+
+        $c['gift_image_layout'] = self::sanitize_gift_image_layout($c['gift_image_layout'] ?? 'compact');
+        $c['gift_image_custom_min_width'] = max(80, min(260, intval($c['gift_image_custom_min_width'] ?? 120)));
+        $c['gift_image_custom_max_grid_width'] = max(320, min(1200, intval($c['gift_image_custom_max_grid_width'] ?? 560)));
+        $c['gift_image_custom_aspect_ratio'] = self::sanitize_gift_image_aspect_ratio($c['gift_image_custom_aspect_ratio'] ?? '1/1');
+
         return $c;
+    }
+
+    private static function get_gift_image_layout_presets() {
+        return [
+            'compact' => [
+                'label' => 'Kompakt rutenett',
+                'description' => 'Små gavekort med jevn 1:1-beskjæring.',
+                'min_width' => 96,
+                'aspect_ratio' => '1/1',
+                'max_grid_width' => 500,
+                'object_fit' => 'cover',
+            ],
+            'balanced' => [
+                'label' => 'Balansert (anbefalt)',
+                'description' => 'God lesbarhet uten at valgkortene blir for store.',
+                'min_width' => 120,
+                'aspect_ratio' => '1/1',
+                'max_grid_width' => 640,
+                'object_fit' => 'cover',
+            ],
+            'wide' => [
+                'label' => 'Bredt kort',
+                'description' => 'Litt bredere kort med 4:3-forhold.',
+                'min_width' => 140,
+                'aspect_ratio' => '4/3',
+                'max_grid_width' => 760,
+                'object_fit' => 'cover',
+            ],
+            'list' => [
+                'label' => 'Listevisning',
+                'description' => 'Store kort i færre kolonner med 16:9-forhold.',
+                'min_width' => 220,
+                'aspect_ratio' => '16/9',
+                'max_grid_width' => 900,
+                'object_fit' => 'cover',
+            ],
+        ];
+    }
+
+    private static function sanitize_gift_image_layout($layout) {
+        $layout = sanitize_key($layout);
+        $presets = self::get_gift_image_layout_presets();
+        if ($layout === 'custom' || isset($presets[$layout])) {
+            return $layout;
+        }
+        return 'compact';
+    }
+
+    private static function sanitize_gift_image_aspect_ratio($ratio) {
+        $ratio = trim((string) $ratio);
+        if (!preg_match('/^([0-9]+(?:\.[0-9]+)?)\s*\/\s*([0-9]+(?:\.[0-9]+)?)$/', $ratio, $matches)) {
+            return '1/1';
+        }
+
+        $width = floatval($matches[1]);
+        $height = floatval($matches[2]);
+        if ($width <= 0 || $height <= 0) {
+            return '1/1';
+        }
+
+        return $matches[1] . '/' . $matches[2];
+    }
+
+    private static function get_gift_card_layout($campaign) {
+        $layout = self::sanitize_gift_image_layout($campaign['gift_image_layout'] ?? 'compact');
+        if ($layout === 'custom') {
+            return [
+                'layout' => 'custom',
+                'min_width' => max(80, min(260, intval($campaign['gift_image_custom_min_width'] ?? 120))),
+                'aspect_ratio' => self::sanitize_gift_image_aspect_ratio($campaign['gift_image_custom_aspect_ratio'] ?? '1/1'),
+                'max_grid_width' => max(320, min(1200, intval($campaign['gift_image_custom_max_grid_width'] ?? 560))),
+                'object_fit' => 'cover',
+            ];
+        }
+
+        $presets = self::get_gift_image_layout_presets();
+        $preset = $presets[$layout] ?? $presets['compact'];
+
+        return [
+            'layout' => $layout,
+            'min_width' => intval($preset['min_width']),
+            'aspect_ratio' => self::sanitize_gift_image_aspect_ratio($preset['aspect_ratio']),
+            'max_grid_width' => intval($preset['max_grid_width']),
+            'object_fit' => in_array($preset['object_fit'], ['cover', 'contain'], true) ? $preset['object_fit'] : 'cover',
+        ];
     }
 
     public static function enqueue_admin_assets($hook) {
@@ -318,6 +413,22 @@ final class GGW_Free_Gift_Campaigns {
                     <tr><th>Maks per spesifikk gave</th><td><?php self::render_gift_limits_fields($editing); ?><p class="description">Sett valgfri maksgrense per gaveprodukt i samme kampanje.</p></td></tr>
                     <tr><th>Hvor mange gaver kunden kan velge</th><td><input type="number" name="gifts_to_choose" value="<?php echo esc_attr($editing['gifts_to_choose']); ?>" min="1"> gave(r)<p class="description">Antall gavevalg per oppnådd "gave-runde".</p></td></tr>
                     <tr><th>Maks gaver per ordre</th><td><input type="number" name="max_gifts_per_order" value="<?php echo esc_attr($editing['max_gifts_per_order']); ?>" min="1"><p class="description" style="margin-top:6px;">Sikkerhetsgrense for antall gaver i én bestilling. Regel: treff = gulv(trigger-antall / minimum antall trigger). Gaverett = min(maks gaver per ordre, treff × kunden kan velge).</p></td></tr>
+                    <tr><th>Bildevisning for gavevalg</th><td>
+                        <?php $gift_layout_presets = self::get_gift_image_layout_presets(); ?>
+                        <select name="gift_image_layout">
+                            <?php foreach ($gift_layout_presets as $layout_key => $layout_preset): ?>
+                                <option value="<?php echo esc_attr($layout_key); ?>" <?php selected($editing['gift_image_layout'] ?? 'compact', $layout_key); ?>><?php echo esc_html($layout_preset['label']); ?></option>
+                            <?php endforeach; ?>
+                            <option value="custom" <?php selected($editing['gift_image_layout'] ?? 'compact', 'custom'); ?>>Custom</option>
+                        </select>
+                        <p class="description" style="margin-top:6px;">Velg en preset som styrer størrelse/format på gavebildene, eller bruk custom under.</p>
+                        <div style="display:flex;flex-wrap:wrap;gap:12px;margin-top:8px;">
+                            <label>Custom min-kortbredde (px)<br><input type="number" name="gift_image_custom_min_width" min="80" max="260" value="<?php echo esc_attr($editing['gift_image_custom_min_width']); ?>"></label>
+                            <label>Custom sideforhold<br><input type="text" name="gift_image_custom_aspect_ratio" value="<?php echo esc_attr($editing['gift_image_custom_aspect_ratio']); ?>" placeholder="1/1"></label>
+                            <label>Custom maks grid-bredde (px)<br><input type="number" name="gift_image_custom_max_grid_width" min="320" max="1200" value="<?php echo esc_attr($editing['gift_image_custom_max_grid_width']); ?>"></label>
+                        </div>
+                        <p class="description">Custom-verdier brukes kun når "Custom" er valgt.</p>
+                    </td></tr>
 
                     <tr><th colspan="2"><h2 style="margin:12px 0 0;">Tekster kunden ser</h2><p class="description" style="margin:6px 0 0;">Disse feltene styrer teksten i gaveboksen på produktsiden.</p></th></tr>
                     <tr><th>Kort overskrift</th><td><input type="text" name="headline" class="regular-text" value="<?php echo esc_attr($editing['headline']); ?>"></td></tr>
@@ -416,6 +527,10 @@ final class GGW_Free_Gift_Campaigns {
                 'description' => sanitize_textarea_field(wp_unslash($_POST['description'] ?? '')),
                 'badge' => sanitize_text_field(wp_unslash($_POST['badge'] ?? '')),
                 'cta' => sanitize_text_field(wp_unslash($_POST['cta'] ?? '')),
+                'gift_image_layout' => sanitize_key(wp_unslash($_POST['gift_image_layout'] ?? 'compact')),
+                'gift_image_custom_min_width' => intval($_POST['gift_image_custom_min_width'] ?? 120),
+                'gift_image_custom_aspect_ratio' => sanitize_text_field(wp_unslash($_POST['gift_image_custom_aspect_ratio'] ?? '1/1')),
+                'gift_image_custom_max_grid_width' => intval($_POST['gift_image_custom_max_grid_width'] ?? 560),
             ]);
 
             if (empty($new['title']) || empty($new['gift_products'])) {
@@ -875,7 +990,13 @@ final class GGW_Free_Gift_Campaigns {
             $choice_slots = max(1, intval($campaign['gifts_to_choose'] ?? 1));
             echo '<p style="font-size:12px;color:#374151;margin:0 0 8px;">Velg ' . intval($choice_slots) . ' gave(r) nå. Vi bekrefter valget i handlekurv og checkout.</p>';
 
-            echo '<style>.ggw-gift-choice-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;max-width:560px}.ggw-gift-card{display:block;position:relative;border:1px solid #d1d5db;border-radius:10px;padding:8px;background:#fff;cursor:pointer;transition:border-color .2s,box-shadow .2s}.ggw-gift-card input{position:absolute;opacity:0;pointer-events:none}.ggw-gift-card-media{width:100%;aspect-ratio:1/1;border-radius:8px;overflow:hidden;background:#f3f4f6;margin-bottom:6px}.ggw-gift-card-media img{width:100%;height:100%;object-fit:cover;display:block}.ggw-gift-card-title{font-size:12px;line-height:1.35;color:#111827;display:block}.ggw-gift-card.is-selected{border-color:#111827;box-shadow:0 0 0 1px #111827 inset}</style>';
+            $gift_card_layout = self::get_gift_card_layout($campaign);
+            $grid_min_width = max(80, intval($gift_card_layout['min_width'] ?? 120));
+            $grid_max_width = max(320, intval($gift_card_layout['max_grid_width'] ?? 560));
+            $card_aspect_ratio = self::sanitize_gift_image_aspect_ratio($gift_card_layout['aspect_ratio'] ?? '1/1');
+            $card_object_fit = in_array($gift_card_layout['object_fit'] ?? 'cover', ['cover', 'contain'], true) ? $gift_card_layout['object_fit'] : 'cover';
+
+            echo '<style>.ggw-gift-choice-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(' . esc_attr($grid_min_width) . 'px,1fr));gap:8px;max-width:' . esc_attr($grid_max_width) . 'px}.ggw-gift-card{display:block;position:relative;border:1px solid #d1d5db;border-radius:10px;padding:8px;background:#fff;cursor:pointer;transition:border-color .2s,box-shadow .2s;min-width:0}.ggw-gift-card input{position:absolute;opacity:0;pointer-events:none}.ggw-gift-card-media{width:100%;aspect-ratio:' . esc_attr($card_aspect_ratio) . ';border-radius:8px;overflow:hidden;background:#f3f4f6;margin-bottom:6px}.ggw-gift-card-media img{width:100%;height:100%;max-width:100%;object-fit:' . esc_attr($card_object_fit) . ';display:block}.ggw-gift-card-title{font-size:12px;line-height:1.35;color:#111827;display:block;word-break:break-word}.ggw-gift-card.is-selected{border-color:#111827;box-shadow:0 0 0 1px #111827 inset}</style>';
 
             for ($slot = 0; $slot < $choice_slots; $slot++) {
                 $slot_number = $slot + 1;
