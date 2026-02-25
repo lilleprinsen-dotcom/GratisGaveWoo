@@ -10,6 +10,9 @@
  * OBS:
  * - Dette er en robust MVP med fokus på ytelse og server-side validering.
  * - Test alltid i staging før produksjon.
+ * - Standardregel: gave-linjer (_ggw_is_gift=1) ekskluderes fra relevante summer
+ *   (fraktpakker, fri-frakt terskel, og kupongers produktvalidering).
+ * - Unntak kan styres via filter: ggw_exclude_gift_from_sum.
  */
 
 if (!defined('ABSPATH')) { exit; }
@@ -35,9 +38,13 @@ final class GGW_Free_Gift_Campaigns {
         // Cart synchronization + pricing
         add_action('woocommerce_before_calculate_totals', [__CLASS__, 'sync_cart_gifts'], 20);
         add_action('woocommerce_cart_loaded_from_session', [__CLASS__, 'mark_session_loaded']);
+        add_filter('woocommerce_get_cart_item_from_session', [__CLASS__, 'restore_gift_cart_item_data'], 20, 2);
         add_filter('woocommerce_cart_item_name', [__CLASS__, 'label_gift_cart_item'], 10, 3);
         add_filter('woocommerce_get_item_data', [__CLASS__, 'display_cart_item_meta'], 10, 2);
         add_action('woocommerce_remove_cart_item', [__CLASS__, 'cleanup_removed_trigger'], 10, 2);
+        add_filter('woocommerce_cart_shipping_packages', [__CLASS__, 'filter_shipping_packages'], 20);
+        add_filter('woocommerce_shipping_free_shipping_is_available', [__CLASS__, 'filter_free_shipping_availability'], 20, 3);
+        add_filter('woocommerce_coupon_is_valid_for_product', [__CLASS__, 'exclude_gifts_from_coupon_product_validation'], 20, 4);
 
         // Checkout fallback
         add_action('woocommerce_review_order_before_payment', [__CLASS__, 'render_checkout_fallback']);
@@ -707,6 +714,7 @@ final class GGW_Free_Gift_Campaigns {
     }
 
     private static function cart_item_counts_for_campaign_trigger($item, $campaign) {
+        if (self::cart_item_is_gift($item)) return false;
         if (empty($campaign['exclude_sale'])) return true;
 
         $target_id = self::cart_item_target_product_id($item);
@@ -716,6 +724,96 @@ final class GGW_Free_Gift_Campaigns {
         if (!$product) return false;
 
         return !$product->is_on_sale();
+    }
+
+    private static function cart_item_is_gift($item) {
+        return !empty($item['_ggw_is_gift']);
+    }
+
+    private static function mark_cart_item_as_gift($cart_item_data, $campaign_id = '', $trigger_key = '', $label = 'Gratis gave') {
+        $cart_item_data['_ggw_is_gift'] = '1';
+        $cart_item_data['_ggw_campaign_id'] = sanitize_text_field($campaign_id);
+        $cart_item_data['_ggw_trigger_key'] = sanitize_text_field($trigger_key);
+        $cart_item_data['_ggw_label'] = sanitize_text_field($label);
+        $cart_item_data['_ggw_gift_instance'] = wp_generate_uuid4();
+
+        return $cart_item_data;
+    }
+
+    private static function should_exclude_gift_item_from_sums($cart_item, $context = 'default') {
+        if (!self::cart_item_is_gift($cart_item)) return false;
+        return (bool) apply_filters('ggw_exclude_gift_from_sum', true, $cart_item, $context);
+    }
+
+    private static function get_non_gift_cart_subtotal($cart) {
+        if (!$cart || $cart->is_empty()) return 0.0;
+
+        $subtotal = 0.0;
+        foreach ($cart->get_cart() as $item) {
+            if (self::should_exclude_gift_item_from_sums($item, 'subtotal')) continue;
+            $subtotal += floatval($item['line_subtotal'] ?? 0);
+        }
+        return max(0.0, $subtotal);
+    }
+
+    public static function restore_gift_cart_item_data($session_data, $values) {
+        if (!empty($session_data['_ggw_is_gift'])) {
+            $session_data['_ggw_is_gift'] = '1';
+        }
+        return $session_data;
+    }
+
+    public static function filter_shipping_packages($packages) {
+        if (empty($packages) || !is_array($packages)) return $packages;
+
+        foreach ($packages as $idx => $package) {
+            if (empty($package['contents']) || !is_array($package['contents'])) continue;
+
+            $gift_total = 0.0;
+            foreach ($package['contents'] as $item) {
+                if (!self::should_exclude_gift_item_from_sums($item, 'shipping_package')) continue;
+                $gift_total += floatval($item['line_total'] ?? $item['line_subtotal'] ?? 0);
+            }
+
+            if (!empty($gift_total) && isset($package['contents_cost'])) {
+                $package['contents_cost'] = max(0.0, floatval($package['contents_cost']) - $gift_total);
+            }
+
+            $packages[$idx] = $package;
+        }
+
+        return $packages;
+    }
+
+    public static function filter_free_shipping_availability($is_available, $package, $shipping_method) {
+        if (!is_object($shipping_method) || empty($shipping_method->min_amount)) return $is_available;
+
+        $requires = $shipping_method->requires ?? '';
+        if (!in_array($requires, ['min_amount', 'either', 'both'], true)) return $is_available;
+
+        $cart = WC()->cart;
+        if (!$cart) return $is_available;
+
+        $non_gift_subtotal = self::get_non_gift_cart_subtotal($cart);
+        if (in_array($requires, ['min_amount', 'either'], true) && $non_gift_subtotal < floatval($shipping_method->min_amount)) {
+            return false;
+        }
+
+        if ($requires === 'both' && $non_gift_subtotal < floatval($shipping_method->min_amount)) {
+            return false;
+        }
+
+        return $is_available;
+    }
+
+    public static function exclude_gifts_from_coupon_product_validation($valid, $product, $coupon, $values) {
+        if (!self::cart_item_is_gift($values)) return $valid;
+
+        if (self::should_exclude_gift_item_from_sums($values, 'coupon_validation')) {
+            return false;
+        }
+
+        return $valid;
     }
 
     private static function evaluate_campaign_trigger_state($campaign, $qty, $subtotal, $campaign_id = '') {
@@ -766,7 +864,7 @@ final class GGW_Free_Gift_Campaigns {
         $gift_lines = []; // cart_item_key => item
 
         foreach ($cart->get_cart() as $key => $item) {
-            if (!empty($item['_ggw_is_gift'])) {
+            if (self::cart_item_is_gift($item)) {
                 $gift_lines[$key] = $item;
                 continue;
             }
@@ -866,13 +964,7 @@ final class GGW_Free_Gift_Campaigns {
                     $kept_gift_lines[$exists_key] = true;
                 } else {
                     $trigger_ref = reset($info['trigger_keys']);
-                    $add_data = [
-                        '_ggw_is_gift' => 1,
-                        '_ggw_campaign_id' => $cid,
-                        '_ggw_trigger_key' => $trigger_ref ?: '',
-                        '_ggw_label' => 'Gratis gave',
-                        '_ggw_gift_instance' => wp_generate_uuid4(),
-                    ];
+                    $add_data = self::mark_cart_item_as_gift([], $cid, $trigger_ref ?: '', 'Gratis gave');
                     $new_key = $cart->add_to_cart($gift_parent_id, 1, $gift_variation_id, $variation_attributes, $add_data);
                     if ($new_key) {
                         if (isset($cart->cart_contents[$new_key]['data'])) {
@@ -905,14 +997,14 @@ final class GGW_Free_Gift_Campaigns {
     }
 
     public static function label_gift_cart_item($name, $cart_item, $cart_item_key) {
-        if (!empty($cart_item['_ggw_is_gift'])) {
+        if (self::cart_item_is_gift($cart_item)) {
             $name .= ' <small style="display:block;color:#16a34a;font-weight:600;">Gratis gave</small>';
         }
         return $name;
     }
 
     public static function display_cart_item_meta($item_data, $cart_item) {
-        if (!empty($cart_item['_ggw_is_gift'])) {
+        if (self::cart_item_is_gift($cart_item)) {
             $item_data[] = [
                 'key' => 'Kampanje',
                 'value' => sanitize_text_field($cart_item['_ggw_campaign_id'] ?? ''),
@@ -933,7 +1025,7 @@ final class GGW_Free_Gift_Campaigns {
         $gift_count_by_campaign = [];
 
         foreach ($cart->get_cart() as $cart_item_key => $item) {
-            if (!empty($item['_ggw_is_gift'])) {
+            if (self::cart_item_is_gift($item)) {
                 $cid = $item['_ggw_campaign_id'] ?? '';
                 if ($cid) {
                     $gift_count_by_campaign[$cid] = ($gift_count_by_campaign[$cid] ?? 0) + max(1, intval($item['quantity'] ?? 1));
@@ -1054,7 +1146,7 @@ final class GGW_Free_Gift_Campaigns {
         $existing_gifts = [];
         if ($cart && !$cart->is_empty()) {
             foreach ($cart->get_cart() as $item) {
-                if (empty($item['_ggw_is_gift'])) continue;
+                if (!self::cart_item_is_gift($item)) continue;
                 $existing_gifts[] = [
                     'campaign_id' => sanitize_text_field($item['_ggw_campaign_id'] ?? ''),
                     'gift_parent_id' => absint($item['product_id'] ?? 0),
@@ -1101,13 +1193,7 @@ final class GGW_Free_Gift_Campaigns {
                         break;
                     }
 
-                    $add_data = [
-                        '_ggw_is_gift' => 1,
-                        '_ggw_campaign_id' => $cid,
-                        '_ggw_trigger_key' => sanitize_text_field($row['trigger_key'] ?? 'checkout_fallback'),
-                        '_ggw_label' => 'Gratis gave',
-                        '_ggw_gift_instance' => wp_generate_uuid4(),
-                    ];
+                    $add_data = self::mark_cart_item_as_gift([], $cid, sanitize_text_field($row['trigger_key'] ?? 'checkout_fallback'), 'Gratis gave');
                     $added_key = $cart->add_to_cart($gift_parent_id, 1, $gift_variation_id, $variation_attributes, $add_data);
                     if (!$added_key) {
                         wc_add_notice(__('Kunne ikke legge til gratis gave i handlekurven. Prøv igjen.', 'ggw'), 'error');
@@ -1161,7 +1247,7 @@ final class GGW_Free_Gift_Campaigns {
      * ORDER META
      * ========================= */
     public static function add_order_line_meta($item, $cart_item_key, $values, $order) {
-        if (!empty($values['_ggw_is_gift'])) {
+        if (self::cart_item_is_gift($values)) {
             $item->add_meta_data('_ggw_is_gift', '1', true);
             $item->add_meta_data('_ggw_campaign_id', sanitize_text_field($values['_ggw_campaign_id'] ?? ''), true);
             $item->add_meta_data('_ggw_trigger_key', sanitize_text_field($values['_ggw_trigger_key'] ?? ''), true);
