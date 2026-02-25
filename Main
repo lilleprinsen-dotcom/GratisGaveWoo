@@ -19,6 +19,7 @@ final class GGW_Free_Gift_Campaigns {
     const OPT_KEY = 'ggw_campaigns_v1';
     const NONCE_ACTION = 'ggw_campaigns_save';
     const TRANSIENT_CAMPAIGN_BY_PRODUCT = 'ggw_campaign_by_product_';
+    const OPTION_USAGE_CACHE_VERSION = 'ggw_usage_cache_version';
     const VERSION = '1.0.0';
 
     public static function init() {
@@ -50,6 +51,9 @@ final class GGW_Free_Gift_Campaigns {
         add_action('save_post_product', [__CLASS__, 'soft_invalidate_cache']);
         add_action('edited_product_cat', [__CLASS__, 'soft_invalidate_cache']);
         add_action('edited_product_tag', [__CLASS__, 'soft_invalidate_cache']);
+
+        // Usage-cache invalidation for limits per customer
+        add_action('woocommerce_order_status_changed', [__CLASS__, 'maybe_invalidate_usage_cache_on_status_change'], 10, 4);
     }
 
     /* =========================
@@ -606,28 +610,77 @@ final class GGW_Free_Gift_Campaigns {
     private static $session_loaded = false;
     public static function mark_session_loaded() { self::$session_loaded = true; }
 
+    private static function get_customer_usage_identity() {
+        if (is_user_logged_in()) {
+            return [
+                'type' => 'user',
+                'value' => strval(get_current_user_id()),
+            ];
+        }
+
+        $email = '';
+        if (function_exists('WC') && WC() && WC()->customer) {
+            $email = sanitize_email(WC()->customer->get_billing_email());
+        }
+        if (empty($email) && !empty($_POST['billing_email'])) {
+            $email = sanitize_email(wp_unslash($_POST['billing_email']));
+        }
+        if (empty($email)) return null;
+
+        return [
+            'type' => 'email',
+            'value' => strtolower($email),
+        ];
+    }
+
     private static function customer_used_count_for_campaign($campaign_id) {
-        if (!is_user_logged_in()) return 0;
-        $uid = get_current_user_id();
-        $cache_key = 'ggw_used_' . $uid . '_' . md5($campaign_id);
+        $identity = self::get_customer_usage_identity();
+        if (empty($identity['type']) || empty($identity['value'])) return 0;
+
+        $cache_version = absint(get_option(self::OPTION_USAGE_CACHE_VERSION, 1));
+        $cache_key = 'ggw_used_' . $cache_version . '_' . md5($identity['type'] . '|' . $identity['value'] . '|' . $campaign_id);
         $cached = get_transient($cache_key);
         if ($cached !== false) return intval($cached);
 
-        $orders = wc_get_orders([
-            'customer_id' => $uid,
-            'limit' => 50,
-            'status' => ['wc-processing', 'wc-completed', 'wc-on-hold'],
-            'return' => 'objects',
-        ]);
         $count = 0;
-        foreach ($orders as $o) {
-            foreach ($o->get_items() as $it) {
-                if ($it->get_meta('_ggw_campaign_id') === $campaign_id && $it->get_meta('_ggw_is_gift') === '1') {
-                    $count += max(1, intval($it->get_quantity()));
+
+        $args = [
+            'status' => ['wc-processing', 'wc-completed', 'wc-on-hold'],
+            'limit' => 100,
+            'orderby' => 'date',
+            'order' => 'DESC',
+            'paginate' => true,
+            'return' => 'ids',
+        ];
+
+        if ($identity['type'] === 'user') {
+            $args['customer_id'] = absint($identity['value']);
+        } else {
+            $args['billing_email'] = $identity['value'];
+        }
+
+        $page = 1;
+        do {
+            $args['paged'] = $page;
+            $orders_page = wc_get_orders($args);
+            $order_ids = is_array($orders_page) ? $orders_page : ($orders_page->orders ?? []);
+
+            foreach ($order_ids as $order_id) {
+                $order = wc_get_order($order_id);
+                if (!$order) continue;
+
+                foreach ($order->get_items() as $it) {
+                    if ($it->get_meta('_ggw_campaign_id') === $campaign_id && $it->get_meta('_ggw_is_gift') === '1') {
+                        $count += max(1, intval($it->get_quantity()));
+                    }
                 }
             }
-        }
-        set_transient($cache_key, $count, HOUR_IN_SECONDS);
+
+            $max_pages = is_array($orders_page) ? 0 : intval($orders_page->max_num_pages ?? 0);
+            $page++;
+        } while ($page <= $max_pages);
+
+        set_transient($cache_key, $count, 5 * MINUTE_IN_SECONDS);
         return $count;
     }
 
@@ -1035,6 +1088,17 @@ final class GGW_Free_Gift_Campaigns {
     public static function soft_invalidate_cache() {
         update_option('ggw_campaigns_last_changed', time(), false);
         // Vi unngår tung sletting av alle transients; de utløper raskt (10 min).
+    }
+
+    public static function maybe_invalidate_usage_cache_on_status_change($order_id, $old_status, $new_status, $order) {
+        $tracked_statuses = ['processing', 'completed', 'on-hold'];
+        if (!in_array($new_status, $tracked_statuses, true)) return;
+        self::invalidate_usage_cache_version();
+    }
+
+    private static function invalidate_usage_cache_version() {
+        $version = absint(get_option(self::OPTION_USAGE_CACHE_VERSION, 1));
+        update_option(self::OPTION_USAGE_CACHE_VERSION, $version + 1, false);
     }
 }
 
