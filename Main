@@ -1351,6 +1351,10 @@ final class GGW_Free_Gift_Campaigns {
         return max(0, intval($limits[$gift_parent_id] ?? 0));
     }
 
+    private static function get_per_product_limit_for_campaign($campaign, $gift_parent_id) {
+        return self::gift_limit_for_campaign_product($campaign, $gift_parent_id);
+    }
+
     private static function gift_counts_for_campaign($cart, $campaign_id) {
         $counts = [];
         if (!$cart || $cart->is_empty()) return $counts;
