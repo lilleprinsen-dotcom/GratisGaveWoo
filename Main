@@ -19,6 +19,7 @@
 if (!defined('ABSPATH')) { exit; }
 if (!class_exists('WooCommerce')) { return; }
 
+if (!class_exists('GGW_Free_Gift_Campaigns')):
 final class GGW_Free_Gift_Campaigns {
     const OPT_KEY = 'ggw_campaigns_v1';
     const NONCE_ACTION = 'ggw_campaigns_save';
@@ -2282,5 +2283,6 @@ final class GGW_Free_Gift_Campaigns {
         update_option(self::OPTION_USAGE_CACHE_VERSION, $version + 1, false);
     }
 }
+endif;
 
 GGW_Free_Gift_Campaigns::init();
