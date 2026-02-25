@@ -267,31 +267,35 @@ final class GGW_Free_Gift_Campaigns {
                 <input type="hidden" name="campaign_id" value="<?php echo esc_attr($editing['id']); ?>">
 
                 <table class="form-table">
-                    <tr><th>Tittel</th><td><input type="text" name="title" class="regular-text" value="<?php echo esc_attr($editing['title']); ?>" required></td></tr>
-                    <tr><th>Aktiv</th><td><label><input type="checkbox" name="active" value="1" <?php checked(!empty($editing['active'])); ?>> Aktiv kampanje</label></td></tr>
-                    <tr><th>Prioritet</th><td><input type="number" name="priority" value="<?php echo esc_attr($editing['priority']); ?>"></td></tr>
-                    <tr><th>Startdato</th><td><input type="datetime-local" name="start" value="<?php echo esc_attr($editing['start']); ?>"></td></tr>
-                    <tr><th>Sluttdato</th><td><input type="datetime-local" name="end" value="<?php echo esc_attr($editing['end']); ?>"></td></tr>
+                    <tr><th colspan="2"><h2 style="margin:0;">Grunninnstillinger</h2><p class="description" style="margin:6px 0 0;">Fyll inn disse først. Dette er nok for å få en enkel kampanje i gang.</p></th></tr>
 
-                    <tr><th>Trigger produkter (parent IDer)</th><td><?php self::render_product_multiselect('trigger_products_csv', $editing['trigger_products']); ?></td></tr>
-                    <tr><th>Trigger kategorier (term IDer)</th><td><?php self::render_term_multiselect('trigger_categories_csv', 'product_cat', $editing['trigger_categories']); ?></td></tr>
-                    <tr><th>Trigger tags (term IDer)</th><td><?php self::render_term_multiselect('trigger_tags_csv', 'product_tag', $editing['trigger_tags']); ?></td></tr>
+                    <tr><th>Kampanjenavn</th><td><input type="text" name="title" class="regular-text" value="<?php echo esc_attr($editing['title']); ?>" required><p class="description">Navnet brukes kun internt i admin, så velg et navn du lett kjenner igjen.</p></td></tr>
+                    <tr><th>Aktiver kampanjen</th><td><label><input type="checkbox" name="active" value="1" <?php checked(!empty($editing['active'])); ?>> Kampanjen er aktiv nå</label><p class="description">Skru av hvis du vil lagre uten at kunder ser den enda.</p></td></tr>
+                    <tr><th>Startdato (valgfri)</th><td><input type="datetime-local" name="start" value="<?php echo esc_attr($editing['start']); ?>"><p class="description">La feltet stå tomt for å starte med en gang.</p></td></tr>
+                    <tr><th>Sluttdato (valgfri)</th><td><input type="datetime-local" name="end" value="<?php echo esc_attr($editing['end']); ?>"><p class="description">La feltet stå tomt hvis kampanjen skal løpe til du stopper den manuelt.</p></td></tr>
 
-                    <tr><th>Minimum antall trigger</th><td><input type="number" name="min_qty" value="<?php echo esc_attr($editing['min_qty']); ?>" min="1"></td></tr>
-                    <tr><th>Minimum ordrebeløp</th><td><input type="number" name="min_subtotal" value="<?php echo esc_attr($editing['min_subtotal']); ?>" min="0" step="0.01"></td></tr>
-                    <tr><th>Ekskluder salgsvarer</th><td><label><input type="checkbox" name="exclude_sale" value="1" <?php checked(!empty($editing['exclude_sale'])); ?>> Gjelder ikke salgsvarer</label></td></tr>
+                    <tr><th>Produkter som utløser gave</th><td><?php self::render_product_multiselect('trigger_products_csv', $editing['trigger_products']); ?><p class="description">Velg produkter som skal gi rett på gave.</p></td></tr>
+                    <tr><th>Kategorier som utløser gave</th><td><?php self::render_term_multiselect('trigger_categories_csv', 'product_cat', $editing['trigger_categories']); ?><p class="description">Valgfritt: alle produkter i disse kategoriene teller som utløserprodukter.</p></td></tr>
+                    <tr><th>Tagger som utløser gave</th><td><?php self::render_term_multiselect('trigger_tags_csv', 'product_tag', $editing['trigger_tags']); ?><p class="description">Valgfritt: produkter med disse taggene teller også.</p></td></tr>
 
-                    <tr><th>Gaveprodukter (IDer)</th><td><?php self::render_product_multiselect('gift_products_csv', $editing['gift_products'], true); ?></td></tr>
-                    <tr><th>Kunden kan velge</th><td><input type="number" name="gifts_to_choose" value="<?php echo esc_attr($editing['gifts_to_choose']); ?>" min="1"> gave(r)</td></tr>
-                    <tr><th>Maks gaver per ordre</th><td><input type="number" name="max_gifts_per_order" value="<?php echo esc_attr($editing['max_gifts_per_order']); ?>" min="1"><p class="description" style="margin-top:6px;">Regel: treff = gulv(trigger-antall / minimum antall trigger). Gaverett = min(maks gaver per ordre, treff × kunden kan velge). Eksempel: min antall=2, trigger-antall=5, kunden kan velge=1 gir 2 gaver.</p></td></tr>
-                    <tr><th>Maks per kunde (0=ingen grense)</th><td><input type="number" name="max_per_customer" value="<?php echo esc_attr($editing['max_per_customer']); ?>" min="0"></td></tr>
-                    <tr><th>Krever gavevalg</th><td><label><input type="checkbox" name="require_choice" value="1" <?php checked(!empty($editing['require_choice'])); ?>> Må velge gave før kjøp</label></td></tr>
-                    <tr><th>Auto-gave</th><td><label><input type="checkbox" name="auto_gift" value="1" <?php checked(!empty($editing['auto_gift'])); ?>> Legg til første tilgjengelige gave automatisk</label></td></tr>
+                    <tr><th>Minste antall utløserprodukter</th><td><input type="number" name="min_qty" value="<?php echo esc_attr($editing['min_qty']); ?>" min="1"><p class="description">Eksempel: 2 betyr at kunden må ha minst 2 kvalifiserende produkter i kurven.</p></td></tr>
+                    <tr><th>Minimum ordrebeløp</th><td><input type="number" name="min_subtotal" value="<?php echo esc_attr($editing['min_subtotal']); ?>" min="0" step="0.01"><p class="description">0 betyr ingen beløpsgrense.</p></td></tr>
+                    <tr><th>Gaveprodukter kunden kan få</th><td><?php self::render_product_multiselect('gift_products_csv', $editing['gift_products'], true); ?><p class="description">Disse produktene blir tilgjengelige som gratis gavevalg.</p></td></tr>
+                    <tr><th>Hvor mange gaver kunden kan velge</th><td><input type="number" name="gifts_to_choose" value="<?php echo esc_attr($editing['gifts_to_choose']); ?>" min="1"> gave(r)<p class="description">Antall gavevalg per oppnådd "gave-runde".</p></td></tr>
+                    <tr><th>Maks gaver per ordre</th><td><input type="number" name="max_gifts_per_order" value="<?php echo esc_attr($editing['max_gifts_per_order']); ?>" min="1"><p class="description" style="margin-top:6px;">Sikkerhetsgrense for antall gaver i én bestilling. Regel: treff = gulv(trigger-antall / minimum antall trigger). Gaverett = min(maks gaver per ordre, treff × kunden kan velge).</p></td></tr>
 
+                    <tr><th colspan="2"><h2 style="margin:12px 0 0;">Tekster kunden ser</h2><p class="description" style="margin:6px 0 0;">Disse feltene styrer teksten i gaveboksen på produktsiden.</p></th></tr>
                     <tr><th>Kort overskrift</th><td><input type="text" name="headline" class="regular-text" value="<?php echo esc_attr($editing['headline']); ?>"></td></tr>
-                    <tr><th>Beskrivelse/kravtekst</th><td><textarea name="description" rows="3" class="large-text"><?php echo esc_textarea($editing['description']); ?></textarea></td></tr>
-                    <tr><th>Badge tekst</th><td><input type="text" name="badge" class="regular-text" value="<?php echo esc_attr($editing['badge']); ?>"></td></tr>
-                    <tr><th>CTA tekst</th><td><input type="text" name="cta" class="regular-text" value="<?php echo esc_attr($editing['cta']); ?>"></td></tr>
+                    <tr><th>Beskrivelse / hjelpetekst</th><td><textarea name="description" rows="3" class="large-text"><?php echo esc_textarea($editing['description']); ?></textarea></td></tr>
+                    <tr><th>Badge-tekst</th><td><input type="text" name="badge" class="regular-text" value="<?php echo esc_attr($editing['badge']); ?>"></td></tr>
+                    <tr><th>Knappetekst (CTA)</th><td><input type="text" name="cta" class="regular-text" value="<?php echo esc_attr($editing['cta']); ?>"></td></tr>
+
+                    <tr><th colspan="2"><h2 style="margin:12px 0 0;">Avanserte innstillinger</h2><p class="description" style="margin:6px 0 0;">For deg som vil finstyre oppførselen. Du kan la disse stå på standard hvis du er usikker.</p></th></tr>
+                    <tr><th>Prioritet ved overlapp</th><td><input type="number" name="priority" value="<?php echo esc_attr($editing['priority']); ?>"><p class="description">Hvis flere kampanjer matcher samtidig, vinner høyest tall.</p></td></tr>
+                    <tr><th>Ekskluder salgsvarer</th><td><label><input type="checkbox" name="exclude_sale" value="1" <?php checked(!empty($editing['exclude_sale'])); ?>> Salgsvarer teller ikke for å utløse kampanjen</label></td></tr>
+                    <tr><th>Maks antall ganger per kunde</th><td><input type="number" name="max_per_customer" value="<?php echo esc_attr($editing['max_per_customer']); ?>" min="0"><p class="description">0 = ingen begrensning. 1 = kunden kan bruke kampanjen én gang totalt.</p></td></tr>
+                    <tr><th>Krever aktivt gavevalg</th><td><label><input type="checkbox" name="require_choice" value="1" <?php checked(!empty($editing['require_choice'])); ?>> Kunden må velge gave før checkout</label><p class="description">Skru av hvis du vil la kunden gå videre uten å velge gave.</p></td></tr>
+                    <tr><th>Auto-legg til gave</th><td><label><input type="checkbox" name="auto_gift" value="1" <?php checked(!empty($editing['auto_gift'])); ?>> Legg til første tilgjengelige gave automatisk</label><p class="description">Nyttig hvis du vil gjøre flyten så enkel som mulig.</p></td></tr>
                 </table>
 
                 <?php submit_button($edit_id ? 'Oppdater kampanje' : 'Lagre kampanje'); ?>
