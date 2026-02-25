@@ -41,7 +41,8 @@ final class GGW_Free_Gift_Campaigns {
         // Checkout fallback
         add_action('woocommerce_review_order_before_payment', [__CLASS__, 'render_checkout_fallback']);
         add_action('woocommerce_checkout_process', [__CLASS__, 'checkout_validate_fallback_choice']);
-        add_action('woocommerce_checkout_update_order_meta', [__CLASS__, 'checkout_apply_fallback_choice']);
+        add_action('woocommerce_checkout_process', [__CLASS__, 'checkout_apply_fallback_choice'], 20);
+        add_action('woocommerce_checkout_update_order_meta', [__CLASS__, 'checkout_audit_fallback_choice']);
 
         // Order metadata
         add_action('woocommerce_checkout_create_order_line_item', [__CLASS__, 'add_order_line_meta'], 10, 4);
@@ -836,7 +837,7 @@ final class GGW_Free_Gift_Campaigns {
         $triggers_by_campaign = [];
         $gift_count_by_campaign = [];
 
-        foreach ($cart->get_cart() as $item) {
+        foreach ($cart->get_cart() as $cart_item_key => $item) {
             if (!empty($item['_ggw_is_gift'])) {
                 $cid = $item['_ggw_campaign_id'] ?? '';
                 if ($cid) {
@@ -851,17 +852,22 @@ final class GGW_Free_Gift_Campaigns {
             if (!self::campaign_active_now($c)) continue;
 
             if (!isset($triggers_by_campaign[$c['id']])) {
-                $triggers_by_campaign[$c['id']] = ['campaign' => $c, 'qty' => 0, 'subtotal' => 0.0];
+                $triggers_by_campaign[$c['id']] = ['campaign' => $c, 'qty' => 0, 'subtotal' => 0.0, 'trigger_keys' => []];
             }
 
             $triggers_by_campaign[$c['id']]['qty'] += intval($item['quantity']);
             $triggers_by_campaign[$c['id']]['subtotal'] += floatval($item['line_subtotal'] ?? 0);
+            $triggers_by_campaign[$c['id']]['trigger_keys'][] = $cart_item_key;
         }
 
         foreach ($triggers_by_campaign as $cid => $row) {
             $c = $row['campaign'];
             if ($row['qty'] < intval($c['min_qty'])) continue;
             if ($row['subtotal'] < floatval($c['min_subtotal'])) continue;
+            if ($c['max_per_customer'] > 0) {
+                $used = self::customer_used_count_for_campaign($cid);
+                if ($used >= intval($c['max_per_customer'])) continue;
+            }
             if (empty($c['require_choice']) || !empty($c['auto_gift'])) continue;
 
             $entitled_total = self::campaign_entitled_total($c, $row['qty']);
@@ -877,6 +883,7 @@ final class GGW_Free_Gift_Campaigns {
                 'campaign' => $c,
                 'gifts' => $gifts,
                 'missing_count' => max(1, $entitled_total - $gift_count),
+                'trigger_key' => strval(reset($row['trigger_keys']) ?: ''),
             ];
         }
 
@@ -946,7 +953,7 @@ final class GGW_Free_Gift_Campaigns {
         }
     }
 
-    public static function checkout_apply_fallback_choice($order_id) {
+    public static function checkout_apply_fallback_choice() {
         $posted = $_POST['ggw_checkout_gift'] ?? [];
         $posted_variations = $_POST['ggw_checkout_gift_variation'] ?? [];
         $missing = self::campaigns_missing_gift_in_cart();
@@ -968,12 +975,23 @@ final class GGW_Free_Gift_Campaigns {
 
         $human = [];
         $stored = [];
+        $added_any = false;
         foreach ($posted as $cid => $gid) {
             $cid = sanitize_text_field($cid);
             $gift_parent_id = absint($gid);
             $gift_variation_id = absint($posted_variations[$cid][$gift_parent_id] ?? 0);
             if (!$cid || !$gift_parent_id || empty($missing[$cid])) continue;
-            if (!self::validate_gift_choice($missing[$cid]['campaign'], $gift_parent_id, $gift_variation_id)) continue;
+            $row = $missing[$cid];
+            if (!in_array($gift_parent_id, $row['gifts'], true)) {
+                wc_add_notice(__('Valgt gave er ikke gyldig. Velg på nytt.', 'ggw'), 'error');
+                continue;
+            }
+            if (!self::validate_gift_choice($row['campaign'], $gift_parent_id, $gift_variation_id)) {
+                wc_add_notice(__('Valgt gavevariant er ikke gyldig eller utsolgt. Velg på nytt.', 'ggw'), 'error');
+                continue;
+            }
+
+            $to_add = max(0, intval($row['missing_count'] ?? 0));
 
             $already_exists = false;
             foreach ($existing_gifts as $gift_line) {
@@ -985,17 +1003,31 @@ final class GGW_Free_Gift_Campaigns {
                 }
             }
 
-            if (!$already_exists && $cart) {
+            if (!$already_exists && $to_add > 0 && $cart) {
                 $variation_attributes = $gift_variation_id ? self::get_variation_attributes_for_cart($gift_variation_id) : [];
-                $add_data = [
-                    '_ggw_is_gift' => 1,
-                    '_ggw_campaign_id' => $cid,
-                    '_ggw_trigger_key' => 'checkout_fallback',
-                    '_ggw_label' => 'Gratis gave',
-                ];
-                $added_key = $cart->add_to_cart($gift_parent_id, 1, $gift_variation_id, $variation_attributes, $add_data);
-                if ($added_key && isset($cart->cart_contents[$added_key]['data'])) {
-                    $cart->cart_contents[$added_key]['data']->set_price(0);
+                for ($i = 0; $i < $to_add; $i++) {
+                    if (!self::validate_gift_choice($row['campaign'], $gift_parent_id, $gift_variation_id)) {
+                        wc_add_notice(__('Valgt gavevariant ble utsolgt under utsjekk. Velg på nytt.', 'ggw'), 'error');
+                        break;
+                    }
+
+                    $add_data = [
+                        '_ggw_is_gift' => 1,
+                        '_ggw_campaign_id' => $cid,
+                        '_ggw_trigger_key' => sanitize_text_field($row['trigger_key'] ?? 'checkout_fallback'),
+                        '_ggw_label' => 'Gratis gave',
+                        '_ggw_gift_instance' => wp_generate_uuid4(),
+                    ];
+                    $added_key = $cart->add_to_cart($gift_parent_id, 1, $gift_variation_id, $variation_attributes, $add_data);
+                    if (!$added_key) {
+                        wc_add_notice(__('Kunne ikke legge til gratis gave i handlekurven. Prøv igjen.', 'ggw'), 'error');
+                        break;
+                    }
+
+                    if (isset($cart->cart_contents[$added_key]['data'])) {
+                        $cart->cart_contents[$added_key]['data']->set_price(0);
+                    }
+                    $added_any = true;
                 }
             }
 
@@ -1007,11 +1039,32 @@ final class GGW_Free_Gift_Campaigns {
             ];
         }
 
-        if (!empty($human) && !empty($stored)) {
-            update_post_meta($order_id, '_ggw_checkout_selected_gifts', $stored);
-            $order = wc_get_order($order_id);
-            if ($order) $order->add_order_note('Gratis gave valgt i checkout fallback: ' . implode(' | ', $human));
+        if ($added_any && $cart) {
+            self::sync_cart_gifts($cart);
+            $cart->calculate_totals();
         }
+
+        if (!empty($human) && !empty($stored) && WC()->session) {
+            WC()->session->set('ggw_checkout_selected_gifts', $stored);
+            WC()->session->set('ggw_checkout_selected_gifts_human', $human);
+        }
+    }
+
+    public static function checkout_audit_fallback_choice($order_id) {
+        if (!$order_id || !WC()->session) return;
+
+        $stored = WC()->session->get('ggw_checkout_selected_gifts');
+        $human = WC()->session->get('ggw_checkout_selected_gifts_human');
+        if (!is_array($stored) || empty($stored)) return;
+
+        update_post_meta($order_id, '_ggw_checkout_selected_gifts', $stored);
+        $order = wc_get_order($order_id);
+        if ($order && is_array($human) && !empty($human)) {
+            $order->add_order_note('Gratis gave valgt i checkout fallback: ' . implode(' | ', $human));
+        }
+
+        WC()->session->__unset('ggw_checkout_selected_gifts');
+        WC()->session->__unset('ggw_checkout_selected_gifts_human');
     }
 
     /* =========================
