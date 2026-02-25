@@ -1052,10 +1052,10 @@ final class GGW_Free_Gift_Campaigns {
             echo '<div style="font-size:13px;color:#4b5563;margin-bottom:8px;">' . esc_html($campaign['description']) . '</div>';
         }
 
-        // If require choice, render dropdown(s)
+        // If require choice, render gift grid with quantities.
         if (!empty($campaign['require_choice']) && empty($campaign['auto_gift'])) {
             $choice_slots = max(1, intval($campaign['gifts_to_choose'] ?? 1));
-            echo '<p style="font-size:12px;color:#374151;margin:0 0 8px;">Velg ' . intval($choice_slots) . ' gave(r) nå. Vi bekrefter valget i handlekurv og checkout.</p>';
+            echo '<p style="font-size:12px;color:#374151;margin:0 0 8px;">Velg totalt <strong>' . intval($choice_slots) . '</strong> gave(r). Hvert produkt vises kun én gang, og du velger antall per gave.</p>';
 
             $gift_card_layout = self::get_gift_card_layout($campaign);
             $grid_min_width = max(80, intval($gift_card_layout['min_width'] ?? 120));
@@ -1065,49 +1065,55 @@ final class GGW_Free_Gift_Campaigns {
             $card_shape = self::sanitize_gift_image_shape($gift_card_layout['shape'] ?? ($campaign['gift_image_shape'] ?? 'square'));
             $card_media_radius = $card_shape === 'round' ? '999px' : '8px';
 
-            echo '<style>.ggw-gift-choice-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(' . esc_attr($grid_min_width) . 'px,1fr));gap:12px;max-width:min(100%,' . esc_attr($grid_max_width) . 'px);align-items:start}.ggw-gift-card{display:flex;flex-direction:column;position:relative;border:1px solid #d1d5db;border-radius:10px;padding:8px;background:#fff;cursor:pointer;transition:border-color .2s,box-shadow .2s;min-width:0;height:100%}.ggw-gift-card input{position:absolute;opacity:0;pointer-events:none}.ggw-gift-card-media{width:100%;aspect-ratio:' . esc_attr($card_aspect_ratio) . ';border-radius:' . esc_attr($card_media_radius) . ';overflow:hidden;background:#f3f4f6;margin-bottom:8px}.ggw-gift-card-media img{width:100%;height:100%;max-width:100%;object-fit:' . esc_attr($card_object_fit) . ';display:block}.ggw-gift-card-title{font-size:13px;line-height:1.35;color:#111827;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word;min-height:52px}.ggw-gift-card.is-selected{border-color:#111827;box-shadow:0 0 0 1px #111827 inset}</style>';
+            echo '<style>.ggw-gift-choice-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(' . esc_attr($grid_min_width) . 'px,1fr));gap:12px;max-width:min(100%,' . esc_attr($grid_max_width) . 'px);align-items:start}.ggw-gift-card{display:flex;flex-direction:column;position:relative;border:1px solid #d1d5db;border-radius:10px;padding:8px;background:#fff;transition:border-color .2s,box-shadow .2s;min-width:0;height:100%}.ggw-gift-card-media{width:100%;aspect-ratio:' . esc_attr($card_aspect_ratio) . ';border-radius:' . esc_attr($card_media_radius) . ';overflow:hidden;background:#f3f4f6;margin-bottom:8px;position:relative}.ggw-gift-card-media img{width:100%;height:100%;max-width:100%;object-fit:' . esc_attr($card_object_fit) . ';display:block}.ggw-gift-card-title{font-size:13px;line-height:1.35;color:#111827;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word;min-height:52px}.ggw-gift-card.is-selected{border-color:#111827;box-shadow:0 0 0 1px #111827 inset}.ggw-gift-selected-overlay{position:absolute;inset:0;background:rgba(17,24,39,.72);color:#fff;display:flex;align-items:center;justify-content:center;text-align:center;font-size:13px;font-weight:600;padding:8px;opacity:0;pointer-events:none;transition:opacity .2s}.ggw-gift-card.is-selected .ggw-gift-selected-overlay{opacity:1}.ggw-gift-qty-row{margin-top:8px;display:flex;align-items:center;gap:8px}.ggw-gift-qty-row input[type=number]{width:84px}.ggw-gift-variation-wrap{margin-top:8px}.ggw-gift-total{margin-top:8px;font-size:12px;color:#374151}</style>';
 
-            for ($slot = 0; $slot < $choice_slots; $slot++) {
-                $slot_number = $slot + 1;
-                echo '<div class="ggw-gift-choice-slot" style="margin-bottom:10px;">';
-                echo '<div style="display:block;font-size:13px;margin-bottom:6px;font-weight:600;">' . esc_html($campaign['cta']) . ' ' . intval($slot_number) . '</div>';
-                echo '<div class="ggw-gift-choice-grid">';
-                foreach ($gift_ids as $gid) {
-                    $gp = wc_get_product($gid);
-                    if (!$gp) continue;
-                    $image_id = $gp->get_image_id();
-                    $image_html = $image_id
-                        ? wp_get_attachment_image($image_id, 'woocommerce_thumbnail', false, ['loading' => 'lazy', 'decoding' => 'async'])
-                        : wc_placeholder_img('woocommerce_thumbnail');
+            echo '<div class="ggw-gift-choice-grid">';
+            foreach ($gift_ids as $gid) {
+                $gp = wc_get_product($gid);
+                if (!$gp) continue;
 
-                    echo '<label class="ggw-gift-card" data-slot="' . esc_attr($slot) . '">';
-                    echo '<input type="radio" id="ggw_gift_product_' . esc_attr($slot) . '_' . esc_attr($gid) . '" name="ggw_gift_product[' . esc_attr($slot) . ']" value="' . esc_attr($gid) . '">';
-                    echo '<span class="ggw-gift-card-media">' . wp_kses_post($image_html) . '</span>';
-                    echo '<span class="ggw-gift-card-title">' . esc_html($gp->get_name()) . '</span>';
-                    echo '</label>';
+                $max_for_gift = self::get_per_product_limit_for_campaign($campaign, $gid);
+                if ($max_for_gift <= 0) {
+                    $max_for_gift = $choice_slots;
                 }
+                $max_for_gift = min($choice_slots, $max_for_gift);
+
+                $image_id = $gp->get_image_id();
+                $image_html = $image_id
+                    ? wp_get_attachment_image($image_id, 'woocommerce_thumbnail', false, ['loading' => 'lazy', 'decoding' => 'async'])
+                    : wc_placeholder_img('woocommerce_thumbnail');
+
+                echo '<div class="ggw-gift-card" data-gift-id="' . esc_attr($gid) . '">';
+                echo '<span class="ggw-gift-card-media">' . wp_kses_post($image_html) . '<span class="ggw-gift-selected-overlay" data-gift-overlay>' . esc_html__('Valgt gave x0', 'ggw') . '</span></span>';
+                echo '<span class="ggw-gift-card-title">' . esc_html($gp->get_name()) . '</span>';
+                echo '<div class="ggw-gift-qty-row">';
+                echo '<label for="ggw_gift_qty_' . esc_attr($gid) . '" style="font-size:12px;">Antall</label>';
+                echo '<input type="number" min="0" max="' . esc_attr($max_for_gift) . '" step="1" value="0" id="ggw_gift_qty_' . esc_attr($gid) . '" name="ggw_gift_qty[' . esc_attr($gid) . ']" data-gift-qty data-gift-id="' . esc_attr($gid) . '">';
+                echo '<small style="color:#6b7280;">Maks ' . esc_html($max_for_gift) . '</small>';
                 echo '</div>';
 
-                foreach ($gift_ids as $gid) {
-                    $gp = wc_get_product($gid);
-                    if (!$gp || !$gp->is_type('variable')) continue;
+                if ($gp->is_type('variable')) {
                     $variations = self::get_available_gift_variations($gid);
-                    if (empty($variations)) continue;
-
-                    echo '<div class="ggw-gift-variation-wrap" data-slot="' . esc_attr($slot) . '" data-gift-id="' . esc_attr($gid) . '" style="display:none;margin-top:8px;">';
-                    echo '<label for="ggw_gift_variation_' . esc_attr($slot) . '_' . esc_attr($gid) . '" style="display:block;font-size:12px;margin-bottom:4px;">Velg variant</label>';
-                    echo '<select id="ggw_gift_variation_' . esc_attr($slot) . '_' . esc_attr($gid) . '" name="ggw_gift_variation_id[' . esc_attr($slot) . '][' . esc_attr($gid) . ']" style="width:100%;max-width:360px;">';
-                    echo '<option value="">Velg variant</option>';
-                    foreach ($variations as $variation_row) {
-                        echo '<option value="' . esc_attr($variation_row['id']) . '">' . esc_html($variation_row['label']) . '</option>';
+                    if (!empty($variations)) {
+                        echo '<div class="ggw-gift-variation-wrap" data-gift-id="' . esc_attr($gid) . '" style="display:none;">';
+                        echo '<label for="ggw_gift_variation_' . esc_attr($gid) . '" style="display:block;font-size:12px;margin-bottom:4px;">Velg variant</label>';
+                        echo '<select id="ggw_gift_variation_' . esc_attr($gid) . '" name="ggw_gift_variation_id[' . esc_attr($gid) . ']" style="width:100%;">';
+                        echo '<option value="">Velg variant</option>';
+                        foreach ($variations as $variation_row) {
+                            echo '<option value="' . esc_attr($variation_row['id']) . '">' . esc_html($variation_row['label']) . '</option>';
+                        }
+                        echo '</select>';
+                        echo '</div>';
                     }
-                    echo '</select>';
-                    echo '</div>';
                 }
+
                 echo '</div>';
             }
+            echo '</div>';
 
-            echo '<script>(function(){var radios=document.querySelectorAll(".ggw-gift-card input[type=radio]");if(!radios.length){return;}var wraps=document.querySelectorAll(".ggw-gift-variation-wrap");var update=function(){var selectedBySlot={};radios.forEach(function(r){if(r.checked){var slotMatch=r.name.match(/\[(\d+)\]/);if(slotMatch){selectedBySlot[slotMatch[1]]=r.value;}}var card=r.closest(".ggw-gift-card");if(card){card.classList.toggle("is-selected",r.checked);}});wraps.forEach(function(w){var slot=w.getAttribute("data-slot");w.style.display=(selectedBySlot[slot]&&selectedBySlot[slot]===w.getAttribute("data-gift-id"))?"block":"none";});};radios.forEach(function(r){r.addEventListener("change",update);});update();})();</script>';
+            echo '<div class="ggw-gift-total" data-gift-total data-required="' . esc_attr($choice_slots) . '"></div>';
+
+            echo '<script>(function(){var wrap=document.currentScript&&document.currentScript.previousElementSibling;var qtyInputs=document.querySelectorAll("[data-gift-qty]");if(!qtyInputs.length){return;}var totalEl=document.querySelector("[data-gift-total]");var parseIntSafe=function(v){var n=parseInt(v,10);return isNaN(n)?0:n;};var update=function(){var total=0;qtyInputs.forEach(function(input){var min=parseIntSafe(input.getAttribute("min"));var max=parseIntSafe(input.getAttribute("max"));var value=parseIntSafe(input.value);if(value<min){value=min;}if(max>0&&value>max){value=max;}input.value=value;total+=value;var giftId=input.getAttribute("data-gift-id");var card=document.querySelector(".ggw-gift-card[data-gift-id=\""+giftId+"\"]");if(!card){return;}card.classList.toggle("is-selected",value>0);var overlay=card.querySelector("[data-gift-overlay]");if(overlay){overlay.textContent="Valgt gave x"+value;}var variationWrap=card.querySelector(".ggw-gift-variation-wrap");if(variationWrap){variationWrap.style.display=value>0?"block":"none";if(value===0){var select=variationWrap.querySelector("select");if(select){select.selectedIndex=0;}}}});if(totalEl){var required=parseIntSafe(totalEl.getAttribute("data-required"));if(total===required){totalEl.innerHTML="✅ Du har valgt riktig antall gaver ("+total+"/"+required+").";totalEl.style.color="#047857";}else if(total<required){totalEl.innerHTML="Velg "+(required-total)+" gave(r) til ("+total+"/"+required+").";totalEl.style.color="#374151";}else{totalEl.innerHTML="Du har valgt for mange gaver ("+total+"/"+required+"). Reduser antall før du legger i handlekurv.";totalEl.style.color="#b91c1c";}}};qtyInputs.forEach(function(input){input.addEventListener("input",update);input.addEventListener("change",update);});update();})();</script>';
 
             echo '<input type="hidden" name="ggw_campaign_id" value="' . esc_attr($campaign['id']) . '">';
             echo '<p style="font-size:12px;color:#6b7280;margin-top:6px;">Vi bekrefter gavevalget ditt i handlekurv og checkout.</p>';
@@ -1136,32 +1142,11 @@ final class GGW_Free_Gift_Campaigns {
 
         // Required choice validation
         if (!empty($campaign['require_choice']) && empty($campaign['auto_gift'])) {
-            $required_count = max(1, intval($campaign['gifts_to_choose'] ?? 1));
-            $posted_gifts = $_POST['ggw_gift_product'] ?? [];
-            $gift_variation_map = $_POST['ggw_gift_variation_id'] ?? [];
-            if (!is_array($posted_gifts)) $posted_gifts = [$posted_gifts];
-            if (!is_array($gift_variation_map)) $gift_variation_map = [];
-
-            $planned_counts = [];
-            for ($slot = 0; $slot < $required_count; $slot++) {
-                $gift_id = absint($posted_gifts[$slot] ?? 0);
-                $slot_variations = $gift_variation_map[$slot] ?? [];
-                if (!is_array($slot_variations)) $slot_variations = [];
-                $gift_variation_id = absint($slot_variations[$gift_id] ?? 0);
-
-                if (!$gift_id) {
-                    wc_add_notice(sprintf(__('Velg gave %d før du legger varen i handlekurven.', 'ggw'), $slot + 1), 'error');
-                    return false;
-                }
-                if (!self::validate_gift_choice($campaign, $gift_id, $gift_variation_id)) {
-                    wc_add_notice(sprintf(__('Gave %d er utsolgt nå. Velg en annen gave.', 'ggw'), $slot + 1), 'error');
-                    return false;
-                }
-                if (!self::gift_can_be_used_for_campaign($campaign, $gift_id, WC()->cart, $planned_counts)) {
-                    wc_add_notice(sprintf(__('Gave %d har nådd maks antall for denne kampanjen. Velg en annen gave.', 'ggw'), $slot + 1), 'error');
-                    return false;
-                }
-                $planned_counts[$gift_id] = intval($planned_counts[$gift_id] ?? 0) + 1;
+            $validation_error = '';
+            $selected_gifts = self::collect_selected_gifts_from_request($campaign, WC()->cart, $validation_error);
+            if ($selected_gifts === null) {
+                wc_add_notice($validation_error ?: __('Velg gyldige gaver før du legger varen i handlekurven.', 'ggw'), 'error');
+                return false;
             }
         }
 
@@ -1176,33 +1161,7 @@ final class GGW_Free_Gift_Campaigns {
         $cart_item_data['_ggw_campaign_id'] = $campaign['id'];
         $cart_item_data['_ggw_trigger_parent'] = self::product_parent_id($target_id);
 
-        $required_count = max(1, intval($campaign['gifts_to_choose'] ?? 1));
-        $posted_gifts = $_POST['ggw_gift_product'] ?? [];
-        $gift_variation_map = $_POST['ggw_gift_variation_id'] ?? [];
-        if (!is_array($posted_gifts)) $posted_gifts = [$posted_gifts];
-        if (!is_array($gift_variation_map)) $gift_variation_map = [];
-
-        $selected_gifts = [];
-        $planned_counts = [];
-        for ($slot = 0; $slot < $required_count; $slot++) {
-            $selected_gift = absint($posted_gifts[$slot] ?? 0);
-            $slot_variations = $gift_variation_map[$slot] ?? [];
-            if (!is_array($slot_variations)) $slot_variations = [];
-            $selected_variation = absint($slot_variations[$selected_gift] ?? 0);
-
-            if (!self::validate_gift_choice($campaign, $selected_gift, $selected_variation)) {
-                continue;
-            }
-            if (!self::gift_can_be_used_for_campaign($campaign, $selected_gift, WC()->cart, $planned_counts)) {
-                continue;
-            }
-
-            $planned_counts[$selected_gift] = intval($planned_counts[$selected_gift] ?? 0) + 1;
-            $selected_gifts[] = [
-                'gift_parent_id' => $selected_gift,
-                'gift_variation_id' => $selected_variation,
-            ];
-        }
+        $selected_gifts = self::collect_selected_gifts_from_request($campaign, WC()->cart);
 
         if (!empty($selected_gifts)) {
             $cart_item_data['_ggw_selected_gifts'] = $selected_gifts;
@@ -1214,6 +1173,65 @@ final class GGW_Free_Gift_Campaigns {
             }
         }
         return $cart_item_data;
+    }
+
+    private static function collect_selected_gifts_from_request($campaign, $cart = null, &$error = '') {
+        $required_count = max(1, intval($campaign['gifts_to_choose'] ?? 1));
+        $posted_qty = $_POST['ggw_gift_qty'] ?? [];
+        $gift_variation_map = $_POST['ggw_gift_variation_id'] ?? [];
+
+        if (!is_array($posted_qty)) {
+            $error = __('Velg antall gaver før du legger varen i handlekurven.', 'ggw');
+            return null;
+        }
+        if (!is_array($gift_variation_map)) $gift_variation_map = [];
+
+        $planned_counts = [];
+        $selected_gifts = [];
+        $total_selected = 0;
+
+        foreach ($posted_qty as $gift_id_raw => $qty_raw) {
+            $gift_id = absint($gift_id_raw);
+            $qty = max(0, intval($qty_raw));
+            if (!$gift_id || $qty < 1) continue;
+
+            $max_for_gift = self::get_per_product_limit_for_campaign($campaign, $gift_id);
+            if ($max_for_gift > 0) {
+                $qty = min($qty, $max_for_gift);
+            }
+
+            $selected_variation = absint($gift_variation_map[$gift_id] ?? 0);
+            if (!self::validate_gift_choice($campaign, $gift_id, $selected_variation)) {
+                $error = sprintf(__('Gaven "%s" er ikke tilgjengelig nå. Velg en annen gave.', 'ggw'), get_the_title($gift_id));
+                return null;
+            }
+
+            $gift_product = wc_get_product($gift_id);
+            if ($gift_product && $gift_product->is_type('variable') && !$selected_variation) {
+                $error = sprintf(__('Velg variant for gave "%s".', 'ggw'), $gift_product->get_name());
+                return null;
+            }
+
+            for ($i = 0; $i < $qty; $i++) {
+                if (!self::gift_can_be_used_for_campaign($campaign, $gift_id, $cart ?: WC()->cart, $planned_counts)) {
+                    $error = sprintf(__('Gaven "%s" har nådd maks antall for denne kampanjen.', 'ggw'), get_the_title($gift_id));
+                    return null;
+                }
+                $planned_counts[$gift_id] = intval($planned_counts[$gift_id] ?? 0) + 1;
+                $selected_gifts[] = [
+                    'gift_parent_id' => $gift_id,
+                    'gift_variation_id' => $selected_variation,
+                ];
+                $total_selected++;
+            }
+        }
+
+        if ($total_selected !== $required_count) {
+            $error = sprintf(__('Du må velge nøyaktig %d gave(r) før du legger varen i handlekurven.', 'ggw'), $required_count);
+            return null;
+        }
+
+        return $selected_gifts;
     }
 
     /* =========================
