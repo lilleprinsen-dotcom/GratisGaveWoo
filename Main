@@ -31,6 +31,7 @@ final class GGW_Free_Gift_Campaigns {
         // Admin
         add_action('admin_menu', [__CLASS__, 'admin_menu']);
         add_action('admin_init', [__CLASS__, 'handle_admin_post']);
+        add_action('admin_enqueue_scripts', [__CLASS__, 'enqueue_admin_assets']);
 
         // Product page UX
         add_action('woocommerce_before_add_to_cart_button', [__CLASS__, 'render_product_gift_ui']);
@@ -170,6 +171,65 @@ final class GGW_Free_Gift_Campaigns {
         return $c;
     }
 
+    public static function enqueue_admin_assets($hook) {
+        if ($hook !== 'woocommerce_page_ggw-free-gifts') {
+            return;
+        }
+
+        if (function_exists('wp_enqueue_media')) {
+            wp_enqueue_media();
+        }
+
+        wp_enqueue_script('selectWoo');
+        wp_enqueue_style('select2');
+
+        if (function_exists('WC') && isset(WC()->plugin_url) && function_exists('wp_enqueue_script')) {
+            wp_enqueue_script('wc-enhanced-select');
+        }
+
+        wp_add_inline_style('woocommerce_admin_styles', '.ggw-multiselect{min-width:420px;max-width:100%;}');
+    }
+
+    private static function render_product_multiselect($name, $selected_ids, $required = false) {
+        $selected_ids = array_values(array_filter(array_map('absint', (array) $selected_ids)));
+        echo '<select class="wc-product-search ggw-multiselect" multiple="multiple" style="width:420px;" name="' . esc_attr($name) . '[]" data-placeholder="Søk produkter" data-action="woocommerce_json_search_products_and_variations"';
+        if ($required) {
+            echo ' required';
+        }
+        echo '>';
+
+        foreach ($selected_ids as $product_id) {
+            $product = wc_get_product($product_id);
+            if (!$product) {
+                continue;
+            }
+            echo '<option value="' . esc_attr($product_id) . '" selected="selected">' . esc_html(wp_strip_all_tags($product->get_formatted_name())) . '</option>';
+        }
+
+        echo '</select>';
+        echo '<p class="description">Søk og velg en eller flere produkter.</p>';
+    }
+
+    private static function render_term_multiselect($name, $taxonomy, $selected_ids) {
+        $selected_ids = array_values(array_filter(array_map('absint', (array) $selected_ids)));
+        $terms = get_terms([
+            'taxonomy' => $taxonomy,
+            'hide_empty' => false,
+        ]);
+
+        echo '<select class="wc-enhanced-select ggw-multiselect" multiple="multiple" style="width:420px;" name="' . esc_attr($name) . '[]" data-placeholder="Søk" >';
+
+        if (!is_wp_error($terms)) {
+            foreach ($terms as $term) {
+                echo '<option value="' . esc_attr($term->term_id) . '" ' . selected(in_array((int) $term->term_id, $selected_ids, true), true, false) . '>' . esc_html($term->name . ' (#' . $term->term_id . ')') . '</option>';
+            }
+        }
+
+        echo '</select>';
+        echo '<p class="description">Søk og velg en eller flere termer.</p>';
+    }
+
+
     public static function render_admin_page() {
         if (!current_user_can('manage_woocommerce')) return;
         $campaigns = self::get_campaigns();
@@ -213,15 +273,15 @@ final class GGW_Free_Gift_Campaigns {
                     <tr><th>Startdato</th><td><input type="datetime-local" name="start" value="<?php echo esc_attr($editing['start']); ?>"></td></tr>
                     <tr><th>Sluttdato</th><td><input type="datetime-local" name="end" value="<?php echo esc_attr($editing['end']); ?>"></td></tr>
 
-                    <tr><th>Trigger produkter (parent IDer)</th><td><input type="text" name="trigger_products_csv" class="regular-text" value="<?php echo esc_attr(implode(',', $editing['trigger_products'])); ?>" placeholder="12,34,56"></td></tr>
-                    <tr><th>Trigger kategorier (term IDer)</th><td><input type="text" name="trigger_categories_csv" class="regular-text" value="<?php echo esc_attr(implode(',', $editing['trigger_categories'])); ?>" placeholder="3,8"></td></tr>
-                    <tr><th>Trigger tags (term IDer)</th><td><input type="text" name="trigger_tags_csv" class="regular-text" value="<?php echo esc_attr(implode(',', $editing['trigger_tags'])); ?>" placeholder="2,5"></td></tr>
+                    <tr><th>Trigger produkter (parent IDer)</th><td><?php self::render_product_multiselect('trigger_products_csv', $editing['trigger_products']); ?></td></tr>
+                    <tr><th>Trigger kategorier (term IDer)</th><td><?php self::render_term_multiselect('trigger_categories_csv', 'product_cat', $editing['trigger_categories']); ?></td></tr>
+                    <tr><th>Trigger tags (term IDer)</th><td><?php self::render_term_multiselect('trigger_tags_csv', 'product_tag', $editing['trigger_tags']); ?></td></tr>
 
                     <tr><th>Minimum antall trigger</th><td><input type="number" name="min_qty" value="<?php echo esc_attr($editing['min_qty']); ?>" min="1"></td></tr>
                     <tr><th>Minimum ordrebeløp</th><td><input type="number" name="min_subtotal" value="<?php echo esc_attr($editing['min_subtotal']); ?>" min="0" step="0.01"></td></tr>
                     <tr><th>Ekskluder salgsvarer</th><td><label><input type="checkbox" name="exclude_sale" value="1" <?php checked(!empty($editing['exclude_sale'])); ?>> Gjelder ikke salgsvarer</label></td></tr>
 
-                    <tr><th>Gaveprodukter (IDer)</th><td><input type="text" name="gift_products_csv" class="regular-text" value="<?php echo esc_attr(implode(',', $editing['gift_products'])); ?>" required placeholder="90,91,92"></td></tr>
+                    <tr><th>Gaveprodukter (IDer)</th><td><?php self::render_product_multiselect('gift_products_csv', $editing['gift_products'], true); ?></td></tr>
                     <tr><th>Kunden kan velge</th><td><input type="number" name="gifts_to_choose" value="<?php echo esc_attr($editing['gifts_to_choose']); ?>" min="1"> gave(r)</td></tr>
                     <tr><th>Maks gaver per ordre</th><td><input type="number" name="max_gifts_per_order" value="<?php echo esc_attr($editing['max_gifts_per_order']); ?>" min="1"><p class="description" style="margin-top:6px;">Regel: treff = gulv(trigger-antall / minimum antall trigger). Gaverett = min(maks gaver per ordre, treff × kunden kan velge). Eksempel: min antall=2, trigger-antall=5, kunden kan velge=1 gir 2 gaver.</p></td></tr>
                     <tr><th>Maks per kunde (0=ingen grense)</th><td><input type="number" name="max_per_customer" value="<?php echo esc_attr($editing['max_per_customer']); ?>" min="0"></td></tr>
