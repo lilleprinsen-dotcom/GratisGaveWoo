@@ -166,7 +166,7 @@ final class GGW_Free_Gift_Campaigns {
 
                     <tr><th>Gaveprodukter (IDer)</th><td><input type="text" name="gift_products_csv" class="regular-text" value="<?php echo esc_attr(implode(',', $editing['gift_products'])); ?>" required placeholder="90,91,92"></td></tr>
                     <tr><th>Kunden kan velge</th><td><input type="number" name="gifts_to_choose" value="<?php echo esc_attr($editing['gifts_to_choose']); ?>" min="1"> gave(r)</td></tr>
-                    <tr><th>Maks gaver per ordre</th><td><input type="number" name="max_gifts_per_order" value="<?php echo esc_attr($editing['max_gifts_per_order']); ?>" min="1"></td></tr>
+                    <tr><th>Maks gaver per ordre</th><td><input type="number" name="max_gifts_per_order" value="<?php echo esc_attr($editing['max_gifts_per_order']); ?>" min="1"><p class="description" style="margin-top:6px;">Regel: rule hits = gulv(trigger-antall / minimum antall trigger). Entitlement = min(maks gaver per ordre, rule hits × kunden kan velge). Eksempel: min antall=2, trigger-antall=5, kunden kan velge=1 gir 2 gaver.</p></td></tr>
                     <tr><th>Maks per kunde (0=ingen grense)</th><td><input type="number" name="max_per_customer" value="<?php echo esc_attr($editing['max_per_customer']); ?>" min="0"></td></tr>
                     <tr><th>Krever gavevalg</th><td><label><input type="checkbox" name="require_choice" value="1" <?php checked(!empty($editing['require_choice'])); ?>> Må velge gave før kjøp</label></td></tr>
                     <tr><th>Auto-gave</th><td><label><input type="checkbox" name="auto_gift" value="1" <?php checked(!empty($editing['auto_gift'])); ?>> Legg til første tilgjengelige gave automatisk</label></td></tr>
@@ -631,6 +631,22 @@ final class GGW_Free_Gift_Campaigns {
         return $count;
     }
 
+    private static function campaign_rule_hits($campaign, $trigger_qty) {
+        $min_qty = max(1, intval($campaign['min_qty'] ?? 1));
+        $trigger_qty = max(0, intval($trigger_qty));
+        if ($trigger_qty < $min_qty) return 0;
+        return max(1, (int) floor($trigger_qty / $min_qty));
+    }
+
+    private static function campaign_entitled_total($campaign, $trigger_qty) {
+        $rule_hits = self::campaign_rule_hits($campaign, $trigger_qty);
+        if ($rule_hits < 1) return 0;
+
+        $gifts_to_choose = max(1, intval($campaign['gifts_to_choose'] ?? 1));
+        $max_gifts_per_order = max(1, intval($campaign['max_gifts_per_order'] ?? 1));
+        return max(0, min($max_gifts_per_order, $rule_hits * $gifts_to_choose));
+    }
+
     public static function sync_cart_gifts($cart) {
         if (is_admin() && !defined('DOING_AJAX')) return;
         if (!$cart || $cart->is_empty()) return;
@@ -687,6 +703,8 @@ final class GGW_Free_Gift_Campaigns {
             }
         }
 
+        $kept_gift_lines = [];
+
         // Evaluate entitlement and ensure gift lines
         foreach ($triggers as $cid => $info) {
             $c = $info['campaign'];
@@ -700,8 +718,8 @@ final class GGW_Free_Gift_Campaigns {
                 if ($used >= intval($c['max_per_customer'])) continue;
             }
 
-            $entitled = min(intval($c['max_gifts_per_order']), intval($c['gifts_to_choose']));
-            if ($entitled < 1) continue;
+            $entitled_total = self::campaign_entitled_total($c, $info['qty']);
+            if ($entitled_total < 1) continue;
 
             $selected = array_values(array_unique($info['selected_gifts']));
 
@@ -721,18 +739,23 @@ final class GGW_Free_Gift_Campaigns {
             // If still empty and required choice => wait for fallback in checkout/cart notice
             if (empty($selected)) continue;
 
-            $selected = array_slice($selected, 0, $entitled);
+            $desired = [];
+            $selected_count = count($selected);
+            for ($i = 0; $i < $entitled_total; $i++) {
+                $desired[] = $selected[$i % $selected_count];
+            }
 
-            foreach ($selected as $gift_key) {
+            foreach ($desired as $gift_key) {
                 $gift_parent_id = absint($info['selected_gift_variations'][$gift_key]['gift_parent_id'] ?? 0);
                 $gift_variation_id = absint($info['selected_gift_variations'][$gift_key]['gift_variation_id'] ?? 0);
                 if (!self::validate_gift_choice($c, $gift_parent_id, $gift_variation_id)) continue;
                 $variation_attributes = $gift_variation_id ? self::get_variation_attributes_for_cart($gift_variation_id) : [];
 
-                // Check if gift already exists for campaign + gift product
+                // Check if a matching gift line already exists for campaign + gift product
                 $exists_key = null;
                 foreach ($gift_lines as $gk => $gitem) {
                     if (($gitem['_ggw_campaign_id'] ?? '') === $cid
+                        && empty($kept_gift_lines[$gk])
                         && intval($gitem['product_id']) === $gift_parent_id
                         && intval($gitem['variation_id'] ?? 0) === $gift_variation_id) {
                         $exists_key = $gk; break;
@@ -744,6 +767,7 @@ final class GGW_Free_Gift_Campaigns {
                     $gift_product = $cart->cart_contents[$exists_key]['data'];
                     if ($gift_product) $gift_product->set_price(0);
                     $cart->set_quantity($exists_key, 1, false);
+                    $kept_gift_lines[$exists_key] = true;
                 } else {
                     $trigger_ref = reset($info['trigger_keys']);
                     $add_data = [
@@ -751,30 +775,23 @@ final class GGW_Free_Gift_Campaigns {
                         '_ggw_campaign_id' => $cid,
                         '_ggw_trigger_key' => $trigger_ref ?: '',
                         '_ggw_label' => 'Gratis gave',
+                        '_ggw_gift_instance' => wp_generate_uuid4(),
                     ];
                     $new_key = $cart->add_to_cart($gift_parent_id, 1, $gift_variation_id, $variation_attributes, $add_data);
-                    if ($new_key && isset($cart->cart_contents[$new_key]['data'])) {
-                        $cart->cart_contents[$new_key]['data']->set_price(0);
+                    if ($new_key) {
+                        if (isset($cart->cart_contents[$new_key]['data'])) {
+                            $cart->cart_contents[$new_key]['data']->set_price(0);
+                        }
+                        $cart->set_quantity($new_key, 1, false);
+                        $kept_gift_lines[$new_key] = true;
                     }
                 }
             }
         }
 
-        // Remove orphan gifts / invalid gifts
+        // Remove orphan / excess gifts and keep valid entitlement lines at qty 1
         foreach ($gift_lines as $gk => $gitem) {
-            $cid = $gitem['_ggw_campaign_id'] ?? '';
-            $gift_parent_id = intval($gitem['product_id'] ?? 0);
-            $gift_variation_id = intval($gitem['variation_id'] ?? 0);
-            $valid = false;
-
-            if ($cid && isset($triggers[$cid])) {
-                $c = $triggers[$cid]['campaign'];
-                if (self::campaign_active_now($c) && self::validate_gift_choice($c, $gift_parent_id, $gift_variation_id)) {
-                    $valid = true;
-                }
-            }
-
-            if (!$valid) {
+            if (empty($kept_gift_lines[$gk])) {
                 $cart->remove_cart_item($gk);
             } else {
                 if (isset($cart->cart_contents[$gk]['data'])) {
@@ -817,12 +834,14 @@ final class GGW_Free_Gift_Campaigns {
 
         $missing = [];
         $triggers_by_campaign = [];
-        $gift_by_campaign = [];
+        $gift_count_by_campaign = [];
 
         foreach ($cart->get_cart() as $item) {
             if (!empty($item['_ggw_is_gift'])) {
                 $cid = $item['_ggw_campaign_id'] ?? '';
-                if ($cid) $gift_by_campaign[$cid] = true;
+                if ($cid) {
+                    $gift_count_by_campaign[$cid] = ($gift_count_by_campaign[$cid] ?? 0) + max(1, intval($item['quantity'] ?? 1));
+                }
                 continue;
             }
 
@@ -844,12 +863,21 @@ final class GGW_Free_Gift_Campaigns {
             if ($row['qty'] < intval($c['min_qty'])) continue;
             if ($row['subtotal'] < floatval($c['min_subtotal'])) continue;
             if (empty($c['require_choice']) || !empty($c['auto_gift'])) continue;
-            if (!empty($gift_by_campaign[$cid])) continue;
+
+            $entitled_total = self::campaign_entitled_total($c, $row['qty']);
+            if ($entitled_total < 1) continue;
+
+            $gift_count = intval($gift_count_by_campaign[$cid] ?? 0);
+            if ($gift_count >= $entitled_total) continue;
 
             $gifts = array_values(array_filter($c['gift_products'], [__CLASS__, 'gift_product_is_available']));
             if (empty($gifts)) continue;
 
-            $missing[$cid] = ['campaign' => $c, 'gifts' => $gifts];
+            $missing[$cid] = [
+                'campaign' => $c,
+                'gifts' => $gifts,
+                'missing_count' => max(1, $entitled_total - $gift_count),
+            ];
         }
 
         return $missing;
@@ -864,7 +892,8 @@ final class GGW_Free_Gift_Campaigns {
         echo '<h3 style="margin-top:0">Velg din gratis gave</h3>';
         foreach ($missing as $cid => $row) {
             $c = $row['campaign'];
-            echo '<p style="margin:8px 0 4px;"><strong>' . esc_html($c['title']) . '</strong></p>';
+            $missing_count = max(1, intval($row['missing_count'] ?? 1));
+            echo '<p style="margin:8px 0 4px;"><strong>' . esc_html($c['title']) . '</strong> (' . sprintf(esc_html__('mangler %d gave(r)', 'ggw'), $missing_count) . ')</p>';
             foreach ($row['gifts'] as $gid) {
                 $gp = wc_get_product($gid);
                 if (!$gp) continue;
