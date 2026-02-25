@@ -141,8 +141,8 @@ final class GGW_Free_Gift_Campaigns {
             'max_per_customer' => 0,
             'require_choice' => 1,
             'auto_gift' => 0,
-            'headline' => 'Gratis gave tilgjengelig',
-            'description' => '',
+            'headline' => '🎁 Velg din gratis gave',
+            'description' => 'Legg varen i handlekurven og få en gratis gave med på kjøpet.',
             'badge' => 'Gratis gave',
             'cta' => 'Velg gave',
         ];
@@ -189,9 +189,9 @@ final class GGW_Free_Gift_Campaigns {
             <?php if (!self::checkout_fallback_is_supported()): ?>
                 <div class="notice notice-warning inline">
                     <p>
-                        <strong>Checkout-fallback for gavevalg er deaktivert:</strong>
+                        <strong>Kasse-fallback for gavevalg er deaktivert:</strong>
                         Aktiv checkout-modus er <em><?php echo esc_html(self::get_checkout_mode_label()); ?></em>,
-                        og fallback-funksjonen i denne versjonen støtter kun klassisk checkout
+                        og fallback-funksjonen i denne versjonen støtter kun klassisk kasse
                         (<code>woocommerce_review_order_before_payment</code> + <code>woocommerce_checkout_process</code>).
                     </p>
                 </div>
@@ -219,7 +219,7 @@ final class GGW_Free_Gift_Campaigns {
 
                     <tr><th>Gaveprodukter (IDer)</th><td><input type="text" name="gift_products_csv" class="regular-text" value="<?php echo esc_attr(implode(',', $editing['gift_products'])); ?>" required placeholder="90,91,92"></td></tr>
                     <tr><th>Kunden kan velge</th><td><input type="number" name="gifts_to_choose" value="<?php echo esc_attr($editing['gifts_to_choose']); ?>" min="1"> gave(r)</td></tr>
-                    <tr><th>Maks gaver per ordre</th><td><input type="number" name="max_gifts_per_order" value="<?php echo esc_attr($editing['max_gifts_per_order']); ?>" min="1"><p class="description" style="margin-top:6px;">Regel: rule hits = gulv(trigger-antall / minimum antall trigger). Entitlement = min(maks gaver per ordre, rule hits × kunden kan velge). Eksempel: min antall=2, trigger-antall=5, kunden kan velge=1 gir 2 gaver.</p></td></tr>
+                    <tr><th>Maks gaver per ordre</th><td><input type="number" name="max_gifts_per_order" value="<?php echo esc_attr($editing['max_gifts_per_order']); ?>" min="1"><p class="description" style="margin-top:6px;">Regel: treff = gulv(trigger-antall / minimum antall trigger). Gaverett = min(maks gaver per ordre, treff × kunden kan velge). Eksempel: min antall=2, trigger-antall=5, kunden kan velge=1 gir 2 gaver.</p></td></tr>
                     <tr><th>Maks per kunde (0=ingen grense)</th><td><input type="number" name="max_per_customer" value="<?php echo esc_attr($editing['max_per_customer']); ?>" min="0"></td></tr>
                     <tr><th>Krever gavevalg</th><td><label><input type="checkbox" name="require_choice" value="1" <?php checked(!empty($editing['require_choice'])); ?>> Må velge gave før kjøp</label></td></tr>
                     <tr><th>Auto-gave</th><td><label><input type="checkbox" name="auto_gift" value="1" <?php checked(!empty($editing['auto_gift'])); ?>> Legg til første tilgjengelige gave automatisk</label></td></tr>
@@ -498,7 +498,7 @@ final class GGW_Free_Gift_Campaigns {
             $out[] = [
                 'id' => $variation->get_id(),
                 'attributes' => $attrs,
-                'label' => !empty($label_parts) ? implode(', ', $label_parts) : sprintf(__('Variant #%d', 'ggw'), $variation->get_id()),
+                'label' => !empty($label_parts) ? implode(', ', $label_parts) : sprintf(__('Alternativ %d', 'ggw'), $variation->get_id()),
             ];
         }
 
@@ -560,12 +560,12 @@ final class GGW_Free_Gift_Campaigns {
         // If require choice, render dropdown(s)
         if (!empty($campaign['require_choice']) && empty($campaign['auto_gift'])) {
             $choice_slots = max(1, intval($campaign['gifts_to_choose'] ?? 1));
-            echo '<p style="font-size:12px;color:#374151;margin:0 0 8px;">Du må velge ' . intval($choice_slots) . ' gave(r) per kvalifisering. Har du flere kvalifiserende enheter i handlekurven, kan du velge tilsvarende flere gaver i checkout.</p>';
+            echo '<p style="font-size:12px;color:#374151;margin:0 0 8px;">Velg ' . intval($choice_slots) . ' gave(r) nå. Får du flere kvalifiserende varer i handlekurven, kan du velge flere gaver i kassen.</p>';
 
             for ($slot = 0; $slot < $choice_slots; $slot++) {
                 $slot_number = $slot + 1;
                 echo '<div class="ggw-gift-choice-slot" style="margin-bottom:10px;">';
-                echo '<label for="ggw_gift_product_' . esc_attr($slot) . '" style="display:block;font-size:13px;margin-bottom:4px;">' . esc_html($campaign['cta']) . ' #' . intval($slot_number) . '</label>';
+                echo '<label for="ggw_gift_product_' . esc_attr($slot) . '" style="display:block;font-size:13px;margin-bottom:4px;">' . esc_html($campaign['cta']) . ' ' . intval($slot_number) . '</label>';
                 echo '<select id="ggw_gift_product_' . esc_attr($slot) . '" name="ggw_gift_product[' . esc_attr($slot) . ']" style="width:100%;max-width:360px;">';
                 echo '<option value="">Velg gave</option>';
                 foreach ($gift_ids as $gid) {
@@ -582,9 +582,9 @@ final class GGW_Free_Gift_Campaigns {
                     if (empty($variations)) continue;
 
                     echo '<div class="ggw-gift-variation-wrap" data-slot="' . esc_attr($slot) . '" data-gift-id="' . esc_attr($gid) . '" style="display:none;margin-top:8px;">';
-                    echo '<label for="ggw_gift_variation_' . esc_attr($slot) . '_' . esc_attr($gid) . '" style="display:block;font-size:12px;margin-bottom:4px;">Velg variant</label>';
+                    echo '<label for="ggw_gift_variation_' . esc_attr($slot) . '_' . esc_attr($gid) . '" style="display:block;font-size:12px;margin-bottom:4px;">Velg alternativ</label>';
                     echo '<select id="ggw_gift_variation_' . esc_attr($slot) . '_' . esc_attr($gid) . '" name="ggw_gift_variation_id[' . esc_attr($slot) . '][' . esc_attr($gid) . ']" style="width:100%;max-width:360px;">';
-                    echo '<option value="">Velg variant</option>';
+                    echo '<option value="">Velg alternativ</option>';
                     foreach ($variations as $variation_row) {
                         echo '<option value="' . esc_attr($variation_row['id']) . '">' . esc_html($variation_row['label']) . '</option>';
                     }
@@ -597,9 +597,9 @@ final class GGW_Free_Gift_Campaigns {
             echo '<script>(function(){var selects=document.querySelectorAll(".ggw-gift-choice-slot select[id^=ggw_gift_product_]");if(!selects.length){return;}var wraps=document.querySelectorAll(".ggw-gift-variation-wrap");var update=function(){wraps.forEach(function(w){var slot=w.getAttribute("data-slot");var selected=document.getElementById("ggw_gift_product_"+slot);w.style.display=(selected&&selected.value===w.getAttribute("data-gift-id"))?"block":"none";});};selects.forEach(function(s){s.addEventListener("change",update);});update();})();</script>';
 
             echo '<input type="hidden" name="ggw_campaign_id" value="' . esc_attr($campaign['id']) . '">';
-            echo '<p style="font-size:12px;color:#6b7280;margin-top:6px;">Gaven valideres i handlekurv/checkout.</p>';
+            echo '<p style="font-size:12px;color:#6b7280;margin-top:6px;">Vi sjekker gavevalget ditt i handlekurven og kassen.</p>';
         } else {
-            echo '<p style="font-size:13px;margin:0;">Gratis gave legges automatisk til i handlekurv.</p>';
+            echo '<p style="font-size:13px;margin:0;">Gratis gave legges automatisk i handlekurven.</p>';
             echo '<input type="hidden" name="ggw_campaign_id" value="' . esc_attr($campaign['id']) . '">';
         }
 
@@ -616,7 +616,7 @@ final class GGW_Free_Gift_Campaigns {
         if (!empty($campaign['exclude_sale'])) {
             $p = wc_get_product($target_id);
             if ($p && $p->is_on_sale()) {
-                wc_add_notice(__('Dette produktet kvalifiserer ikke til gavekampanje (salgsvare).', 'ggw'), 'error');
+                wc_add_notice(__('Dette produktet gir ikke gratis gave fordi det er på salg.', 'ggw'), 'error');
                 return false;
             }
         }
@@ -636,11 +636,11 @@ final class GGW_Free_Gift_Campaigns {
                 $gift_variation_id = absint($slot_variations[$gift_id] ?? 0);
 
                 if (!$gift_id) {
-                    wc_add_notice(sprintf(__('Velg gratis gave #%d før du legger i handlekurven.', 'ggw'), $slot + 1), 'error');
+                    wc_add_notice(sprintf(__('Velg gave nr. %d før du legger varen i handlekurven.', 'ggw'), $slot + 1), 'error');
                     return false;
                 }
                 if (!self::validate_gift_choice($campaign, $gift_id, $gift_variation_id)) {
-                    wc_add_notice(sprintf(__('Valgt gave #%d er ikke tilgjengelig. Velg en annen gave.', 'ggw'), $slot + 1), 'error');
+                    wc_add_notice(sprintf(__('Gave nr. %d er ikke tilgjengelig. Velg en annen gave.', 'ggw'), $slot + 1), 'error');
                     return false;
                 }
             }
@@ -1190,16 +1190,16 @@ final class GGW_Free_Gift_Campaigns {
         if (empty($missing)) return;
 
         echo '<div class="ggw-checkout-fallback" style="margin:16px 0;padding:12px;border:1px solid #e5e7eb;border-radius:8px;">';
-        echo '<h3 style="margin-top:0">Velg din gratis gave</h3>';
+        echo '<h3 style="margin-top:0">🎁 Velg din gratis gave</h3>';
         foreach ($missing as $cid => $row) {
             $c = $row['campaign'];
             $missing_count = max(1, intval($row['missing_count'] ?? 1));
-            echo '<p style="margin:8px 0 4px;"><strong>' . esc_html($c['title']) . '</strong> (' . sprintf(esc_html__('mangler %d gave(r)', 'ggw'), $missing_count) . ')</p>';
-            echo '<p style="font-size:12px;color:#374151;margin:0 0 6px;">Du må velge totalt ' . intval($missing_count) . ' gave(r) for denne kampanjen før bestilling kan fullføres.</p>';
+            echo '<p style="margin:8px 0 4px;"><strong>' . esc_html($c['title']) . '</strong> (' . sprintf(esc_html__('%d gave(r) gjenstår', 'ggw'), $missing_count) . ')</p>';
+            echo '<p style="font-size:12px;color:#374151;margin:0 0 6px;">Velg ' . intval($missing_count) . ' gave(r) for å fullføre bestillingen.</p>';
             for ($slot = 0; $slot < $missing_count; $slot++) {
                 $slot_number = $slot + 1;
                 echo '<div class="ggw-checkout-choice-slot" style="margin:8px 0;padding:8px;border:1px dashed #e5e7eb;border-radius:6px;">';
-                echo '<div style="font-size:12px;font-weight:600;margin-bottom:4px;">Gavevalg #' . intval($slot_number) . '</div>';
+                echo '<div style="font-size:12px;font-weight:600;margin-bottom:4px;">Gavevalg ' . intval($slot_number) . '</div>';
                 foreach ($row['gifts'] as $gid) {
                     $gp = wc_get_product($gid);
                     if (!$gp) continue;
@@ -1213,7 +1213,7 @@ final class GGW_Free_Gift_Campaigns {
                         if (empty($variations)) continue;
                         echo '<div class="ggw-checkout-variation-wrap" data-campaign-id="' . esc_attr($cid) . '" data-slot="' . esc_attr($slot) . '" data-gift-id="' . esc_attr($gid) . '" style="display:none;margin:4px 0 8px 24px;">';
                         echo '<select name="ggw_checkout_gift_variation[' . esc_attr($cid) . '][' . esc_attr($slot) . '][' . esc_attr($gid) . ']" style="max-width:320px;">';
-                        echo '<option value="">Velg variant</option>';
+                        echo '<option value="">Velg alternativ</option>';
                         foreach ($variations as $variation_row) {
                             echo '<option value="' . esc_attr($variation_row['id']) . '">' . esc_html($variation_row['label']) . '</option>';
                         }
@@ -1245,15 +1245,15 @@ final class GGW_Free_Gift_Campaigns {
                 if (!is_array($slot_variations)) $slot_variations = [];
                 $gift_variation = absint($slot_variations[$gift] ?? 0);
                 if (!$gift) {
-                    wc_add_notice(sprintf(__('Velg gratis gave #%d før betaling.', 'ggw'), $slot + 1), 'error');
+                    wc_add_notice(sprintf(__('Velg gave nr. %d før du fullfører kjøpet.', 'ggw'), $slot + 1), 'error');
                     continue;
                 }
                 if (!in_array($gift, $row['gifts'], true)) {
-                    wc_add_notice(__('Valgt gave er ikke gyldig. Velg på nytt.', 'ggw'), 'error');
+                    wc_add_notice(__('Valgt gave er ikke gyldig. Prøv igjen.', 'ggw'), 'error');
                     continue;
                 }
                 if (!self::validate_gift_choice($row['campaign'], $gift, $gift_variation)) {
-                    wc_add_notice(__('Valgt gavevariant er ikke gyldig. Velg på nytt.', 'ggw'), 'error');
+                    wc_add_notice(__('Valgt alternativ er ikke gyldig. Prøv igjen.', 'ggw'), 'error');
                 }
             }
         }
@@ -1297,11 +1297,11 @@ final class GGW_Free_Gift_Campaigns {
                 $gift_variation_id = absint($slot_variations[$gift_parent_id] ?? 0);
                 if (!$gift_parent_id) continue;
                 if (!in_array($gift_parent_id, $row['gifts'], true)) {
-                    wc_add_notice(__('Valgt gave er ikke gyldig. Velg på nytt.', 'ggw'), 'error');
+                    wc_add_notice(__('Valgt gave er ikke gyldig. Prøv igjen.', 'ggw'), 'error');
                     continue;
                 }
                 if (!self::validate_gift_choice($row['campaign'], $gift_parent_id, $gift_variation_id)) {
-                    wc_add_notice(__('Valgt gavevariant er ikke gyldig eller utsolgt. Velg på nytt.', 'ggw'), 'error');
+                    wc_add_notice(__('Valgt alternativ er ikke gyldig eller utsolgt. Prøv igjen.', 'ggw'), 'error');
                     continue;
                 }
                 $selected_for_campaign[] = [
@@ -1323,7 +1323,7 @@ final class GGW_Free_Gift_Campaigns {
                     $variation_attributes = $gift_variation_id ? self::get_variation_attributes_for_cart($gift_variation_id) : [];
 
                     if (!self::validate_gift_choice($row['campaign'], $gift_parent_id, $gift_variation_id)) {
-                        wc_add_notice(__('Valgt gavevariant ble utsolgt under utsjekk. Velg på nytt.', 'ggw'), 'error');
+                        wc_add_notice(__('Valgt alternativ ble utsolgt i kassen. Velg på nytt.', 'ggw'), 'error');
                         break;
                     }
 
@@ -1384,7 +1384,7 @@ final class GGW_Free_Gift_Campaigns {
         update_post_meta($order_id, '_ggw_checkout_selected_gifts', $stored);
         $order = wc_get_order($order_id);
         if ($order && is_array($human) && !empty($human)) {
-            $order->add_order_note('Gratis gave valgt i checkout fallback: ' . implode(' | ', $human));
+            $order->add_order_note('Gratis gave valgt i kasse-fallback: ' . implode(' | ', $human));
         }
 
         WC()->session->__unset('ggw_checkout_selected_gifts');
