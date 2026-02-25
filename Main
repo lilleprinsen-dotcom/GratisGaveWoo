@@ -875,18 +875,28 @@ final class GGW_Free_Gift_Campaigns {
             $choice_slots = max(1, intval($campaign['gifts_to_choose'] ?? 1));
             echo '<p style="font-size:12px;color:#374151;margin:0 0 8px;">Velg ' . intval($choice_slots) . ' gave(r) nå. Vi bekrefter valget i handlekurv og checkout.</p>';
 
+            echo '<style>.ggw-gift-choice-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;max-width:560px}.ggw-gift-card{display:block;position:relative;border:1px solid #d1d5db;border-radius:10px;padding:8px;background:#fff;cursor:pointer;transition:border-color .2s,box-shadow .2s}.ggw-gift-card input{position:absolute;opacity:0;pointer-events:none}.ggw-gift-card-media{width:100%;aspect-ratio:1/1;border-radius:8px;overflow:hidden;background:#f3f4f6;margin-bottom:6px}.ggw-gift-card-media img{width:100%;height:100%;object-fit:cover;display:block}.ggw-gift-card-title{font-size:12px;line-height:1.35;color:#111827;display:block}.ggw-gift-card.is-selected{border-color:#111827;box-shadow:0 0 0 1px #111827 inset}</style>';
+
             for ($slot = 0; $slot < $choice_slots; $slot++) {
                 $slot_number = $slot + 1;
                 echo '<div class="ggw-gift-choice-slot" style="margin-bottom:10px;">';
-                echo '<label for="ggw_gift_product_' . esc_attr($slot) . '" style="display:block;font-size:13px;margin-bottom:4px;">' . esc_html($campaign['cta']) . ' ' . intval($slot_number) . '</label>';
-                echo '<select id="ggw_gift_product_' . esc_attr($slot) . '" name="ggw_gift_product[' . esc_attr($slot) . ']" style="width:100%;max-width:360px;">';
-                echo '<option value="">Velg gave</option>';
+                echo '<div style="display:block;font-size:13px;margin-bottom:6px;font-weight:600;">' . esc_html($campaign['cta']) . ' ' . intval($slot_number) . '</div>';
+                echo '<div class="ggw-gift-choice-grid">';
                 foreach ($gift_ids as $gid) {
                     $gp = wc_get_product($gid);
                     if (!$gp) continue;
-                    echo '<option value="' . esc_attr($gid) . '">' . esc_html($gp->get_name()) . '</option>';
+                    $image_id = $gp->get_image_id();
+                    $image_html = $image_id
+                        ? wp_get_attachment_image($image_id, 'woocommerce_thumbnail', false, ['loading' => 'lazy', 'decoding' => 'async'])
+                        : wc_placeholder_img('woocommerce_thumbnail');
+
+                    echo '<label class="ggw-gift-card" data-slot="' . esc_attr($slot) . '">';
+                    echo '<input type="radio" id="ggw_gift_product_' . esc_attr($slot) . '_' . esc_attr($gid) . '" name="ggw_gift_product[' . esc_attr($slot) . ']" value="' . esc_attr($gid) . '">';
+                    echo '<span class="ggw-gift-card-media">' . wp_kses_post($image_html) . '</span>';
+                    echo '<span class="ggw-gift-card-title">' . esc_html($gp->get_name()) . '</span>';
+                    echo '</label>';
                 }
-                echo '</select>';
+                echo '</div>';
 
                 foreach ($gift_ids as $gid) {
                     $gp = wc_get_product($gid);
@@ -907,7 +917,7 @@ final class GGW_Free_Gift_Campaigns {
                 echo '</div>';
             }
 
-            echo '<script>(function(){var selects=document.querySelectorAll(".ggw-gift-choice-slot select[id^=ggw_gift_product_]");if(!selects.length){return;}var wraps=document.querySelectorAll(".ggw-gift-variation-wrap");var update=function(){wraps.forEach(function(w){var slot=w.getAttribute("data-slot");var selected=document.getElementById("ggw_gift_product_"+slot);w.style.display=(selected&&selected.value===w.getAttribute("data-gift-id"))?"block":"none";});};selects.forEach(function(s){s.addEventListener("change",update);});update();})();</script>';
+            echo '<script>(function(){var radios=document.querySelectorAll(".ggw-gift-card input[type=radio]");if(!radios.length){return;}var wraps=document.querySelectorAll(".ggw-gift-variation-wrap");var update=function(){var selectedBySlot={};radios.forEach(function(r){if(r.checked){var slotMatch=r.name.match(/\[(\d+)\]/);if(slotMatch){selectedBySlot[slotMatch[1]]=r.value;}}var card=r.closest(".ggw-gift-card");if(card){card.classList.toggle("is-selected",r.checked);}});wraps.forEach(function(w){var slot=w.getAttribute("data-slot");w.style.display=(selectedBySlot[slot]&&selectedBySlot[slot]===w.getAttribute("data-gift-id"))?"block":"none";});};radios.forEach(function(r){r.addEventListener("change",update);});update();})();</script>';
 
             echo '<input type="hidden" name="ggw_campaign_id" value="' . esc_attr($campaign['id']) . '">';
             echo '<p style="font-size:12px;color:#6b7280;margin-top:6px;">Vi bekrefter gavevalget ditt i handlekurv og checkout.</p>';
