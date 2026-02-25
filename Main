@@ -2,6 +2,7 @@
 /**
  * Gratis gave-kampanjer for WooCommerce (én fil / code snippet)
  * Version: 1.0.0
+ * Støttede checkout-moduser for fallback: klassisk checkout (støttet), Checkout Blocks (ikke støttet i denne versjonen).
  *
  * Bruk:
  * - Legg inn i Code Snippets (Run everywhere) eller child theme functions.php
@@ -46,11 +47,8 @@ final class GGW_Free_Gift_Campaigns {
         add_filter('woocommerce_shipping_free_shipping_is_available', [__CLASS__, 'filter_free_shipping_availability'], 20, 3);
         add_filter('woocommerce_coupon_is_valid_for_product', [__CLASS__, 'exclude_gifts_from_coupon_product_validation'], 20, 4);
 
-        // Checkout fallback
-        add_action('woocommerce_review_order_before_payment', [__CLASS__, 'render_checkout_fallback']);
-        add_action('woocommerce_checkout_process', [__CLASS__, 'checkout_validate_fallback_choice']);
-        add_action('woocommerce_checkout_process', [__CLASS__, 'checkout_apply_fallback_choice'], 20);
-        add_action('woocommerce_checkout_update_order_meta', [__CLASS__, 'checkout_audit_fallback_choice']);
+        // Checkout fallback (støttes kun i klassisk checkout)
+        self::register_checkout_fallback_hooks();
 
         // Order metadata
         add_action('woocommerce_checkout_create_order_line_item', [__CLASS__, 'add_order_line_meta'], 10, 4);
@@ -62,6 +60,38 @@ final class GGW_Free_Gift_Campaigns {
 
         // Usage-cache invalidation for limits per customer
         add_action('woocommerce_order_status_changed', [__CLASS__, 'maybe_invalidate_usage_cache_on_status_change'], 10, 4);
+    }
+
+    private static function register_checkout_fallback_hooks() {
+        if (!self::checkout_fallback_is_supported()) {
+            return;
+        }
+
+        add_action('woocommerce_review_order_before_payment', [__CLASS__, 'render_checkout_fallback']);
+        add_action('woocommerce_checkout_process', [__CLASS__, 'checkout_validate_fallback_choice']);
+        add_action('woocommerce_checkout_process', [__CLASS__, 'checkout_apply_fallback_choice'], 20);
+        add_action('woocommerce_checkout_update_order_meta', [__CLASS__, 'checkout_audit_fallback_choice']);
+    }
+
+    private static function checkout_fallback_is_supported() {
+        return self::get_checkout_mode() === 'classic';
+    }
+
+    private static function get_checkout_mode() {
+        $checkout_page_id = absint(get_option('woocommerce_checkout_page_id'));
+        if (!$checkout_page_id) {
+            return 'classic';
+        }
+
+        if (function_exists('has_block') && has_block('woocommerce/checkout', $checkout_page_id)) {
+            return 'blocks';
+        }
+
+        return 'classic';
+    }
+
+    private static function get_checkout_mode_label() {
+        return self::get_checkout_mode() === 'blocks' ? 'Checkout Blocks' : 'Klassisk checkout';
     }
 
     /* =========================
@@ -155,6 +185,17 @@ final class GGW_Free_Gift_Campaigns {
         <div class="wrap">
             <h1>Gratis gave-kampanjer</h1>
             <p>Opprett eller rediger kampanjer. Høyere prioritet vinner ved overlapp.</p>
+
+            <?php if (!self::checkout_fallback_is_supported()): ?>
+                <div class="notice notice-warning inline">
+                    <p>
+                        <strong>Checkout-fallback for gavevalg er deaktivert:</strong>
+                        Aktiv checkout-modus er <em><?php echo esc_html(self::get_checkout_mode_label()); ?></em>,
+                        og fallback-funksjonen i denne versjonen støtter kun klassisk checkout
+                        (<code>woocommerce_review_order_before_payment</code> + <code>woocommerce_checkout_process</code>).
+                    </p>
+                </div>
+            <?php endif; ?>
 
             <form method="post">
                 <?php wp_nonce_field(self::NONCE_ACTION, 'ggw_nonce'); ?>
