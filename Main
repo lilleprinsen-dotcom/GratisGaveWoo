@@ -386,7 +386,8 @@ final class GGW_Free_Gift_Campaigns {
         $product_id = absint($product_id);
         if (!$product_id) return null;
 
-        $cache_key = self::TRANSIENT_CAMPAIGN_BY_PRODUCT . $product_id;
+        $last_changed = absint(get_option('ggw_campaigns_last_changed', 0));
+        $cache_key = self::TRANSIENT_CAMPAIGN_BY_PRODUCT . $product_id . '_' . $last_changed;
         $cached = get_transient($cache_key);
         if ($cached !== false) return $cached ?: null;
 
@@ -1175,7 +1176,7 @@ final class GGW_Free_Gift_Campaigns {
      * CACHE INVALIDATION
      * ========================= */
     public static function soft_invalidate_cache() {
-        update_option('ggw_campaigns_last_changed', time(), false);
+        update_option('ggw_campaigns_last_changed', current_time('timestamp', true), false);
         // Vi unngår tung sletting av alle transients; de utløper raskt (10 min).
     }
 
