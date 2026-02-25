@@ -183,9 +183,7 @@ final class GGW_Free_Gift_Campaigns {
         wp_enqueue_script('selectWoo');
         wp_enqueue_style('select2');
 
-        if (function_exists('WC') && isset(WC()->plugin_url) && function_exists('wp_enqueue_script')) {
-            wp_enqueue_script('wc-enhanced-select');
-        }
+        wp_enqueue_script('wc-enhanced-select');
 
         wp_add_inline_style('woocommerce_admin_styles', '.ggw-multiselect{min-width:420px;max-width:100%;}');
     }
