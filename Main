@@ -25,6 +25,7 @@ final class GGW_Free_Gift_Campaigns {
     const TRANSIENT_CAMPAIGN_BY_PRODUCT = 'ggw_campaign_by_product_';
     const OPTION_USAGE_CACHE_VERSION = 'ggw_usage_cache_version';
     const VERSION = '1.0.0';
+    const COUPON_GIFT_PRIORITY = 'gift_over_coupon';
 
     public static function init() {
         // Admin
@@ -54,6 +55,7 @@ final class GGW_Free_Gift_Campaigns {
 
         // Order metadata
         add_action('woocommerce_checkout_create_order_line_item', [__CLASS__, 'add_order_line_meta'], 10, 4);
+        add_action('woocommerce_checkout_create_order', [__CLASS__, 'add_order_coupon_conflict_meta'], 20, 2);
 
         // Tiny cache invalidation signal
         add_action('save_post_product', [__CLASS__, 'soft_invalidate_cache']);
@@ -1113,6 +1115,51 @@ final class GGW_Free_Gift_Campaigns {
         return $valid;
     }
 
+    private static function coupon_priority_notice_text() {
+        if (self::COUPON_GIFT_PRIORITY === 'gift_over_coupon') {
+            return __('Prioritet: Gratis gave-regler gjelder først. Kuponger brukes ikke på gave-linjer.', 'ggw');
+        }
+
+        return __('Prioritet: Kuponger gjelder først. Gratis gave justeres deretter.', 'ggw');
+    }
+
+    private static function get_coupon_gift_conflict_reasons($cart = null) {
+        if (!$cart && function_exists('WC') && WC()) {
+            $cart = WC()->cart;
+        }
+        if (!$cart || $cart->is_empty()) return [];
+
+        $gift_count = 0;
+        foreach ($cart->get_cart() as $item) {
+            if (!self::cart_item_is_gift($item)) continue;
+            $gift_count += max(1, intval($item['quantity'] ?? 1));
+        }
+        if ($gift_count < 1) return [];
+
+        $coupon_codes = array_values(array_filter(array_map('wc_clean', (array) $cart->get_applied_coupons())));
+        if (empty($coupon_codes)) return [];
+
+        return [[
+            'type' => 'coupon_gift_priority',
+            'message' => self::coupon_priority_notice_text(),
+            'priority' => self::COUPON_GIFT_PRIORITY,
+            'coupon_codes' => $coupon_codes,
+            'gift_line_count' => $gift_count,
+        ]];
+    }
+
+    private static function persist_coupon_gift_conflict_context($cart = null) {
+        if (!function_exists('WC') || !WC() || !WC()->session) return;
+
+        $reasons = self::get_coupon_gift_conflict_reasons($cart);
+        if (empty($reasons)) {
+            WC()->session->__unset('ggw_coupon_gift_conflicts');
+            return;
+        }
+
+        WC()->session->set('ggw_coupon_gift_conflicts', $reasons);
+    }
+
     private static function evaluate_campaign_trigger_state($campaign, $qty, $subtotal, $campaign_id = '') {
         $qty = max(0, intval($qty));
         $subtotal = max(0.0, floatval($subtotal));
@@ -1190,6 +1237,17 @@ final class GGW_Free_Gift_Campaigns {
     public static function render_cart_status_line() {
         if (!function_exists('is_cart') || !is_cart()) return;
 
+        self::persist_coupon_gift_conflict_context();
+
+        $conflicts = self::get_coupon_gift_conflict_reasons();
+        foreach ($conflicts as $conflict) {
+            $coupon_codes = array_map('sanitize_text_field', (array) ($conflict['coupon_codes'] ?? []));
+            $coupon_text = empty($coupon_codes) ? '' : ' (' . implode(', ', $coupon_codes) . ')';
+            echo '<div class="ggw-cart-coupon-conflict" style="margin:0 0 12px;padding:10px 12px;border-radius:8px;background:#fffbeb;border:1px solid #f59e0b;color:#92400e;font-size:14px;font-weight:600;">';
+            echo esc_html($conflict['message'] . $coupon_text);
+            echo '</div>';
+        }
+
         $rows = self::get_cart_campaign_status_rows();
         if (empty($rows)) return;
 
@@ -1239,6 +1297,8 @@ final class GGW_Free_Gift_Campaigns {
     public static function sync_cart_gifts($cart) {
         if (is_admin() && !defined('DOING_AJAX')) return;
         if (!$cart || $cart->is_empty()) return;
+
+        self::persist_coupon_gift_conflict_context($cart);
 
         // Prevent infinite loops
         static $running = false;
@@ -1710,6 +1770,39 @@ final class GGW_Free_Gift_Campaigns {
             $item->add_meta_data('_ggw_trigger_campaign', sanitize_text_field($values['_ggw_campaign_id']), true);
             $item->add_meta_data('_ggw_trigger_parent', absint($values['_ggw_trigger_parent'] ?? 0), true);
         }
+    }
+
+    public static function add_order_coupon_conflict_meta($order, $data) {
+        if (!function_exists('WC') || !WC() || !WC()->session || !$order) return;
+
+        $reasons = WC()->session->get('ggw_coupon_gift_conflicts');
+        if (!is_array($reasons) || empty($reasons)) {
+            WC()->session->__unset('ggw_coupon_gift_conflicts');
+            return;
+        }
+
+        $order->update_meta_data('_ggw_coupon_gift_conflicts', $reasons);
+
+        $human = [];
+        foreach ($reasons as $reason) {
+            if (!is_array($reason)) continue;
+            $coupon_codes = array_map('sanitize_text_field', (array) ($reason['coupon_codes'] ?? []));
+            $coupon_text = empty($coupon_codes) ? '-' : implode(', ', $coupon_codes);
+            $gift_count = max(0, intval($reason['gift_line_count'] ?? 0));
+            $human[] = sprintf(
+                'Kupong/gave-konflikt (%s): %s | kuponger: %s | gave-linjer: %d',
+                sanitize_text_field($reason['priority'] ?? self::COUPON_GIFT_PRIORITY),
+                sanitize_text_field($reason['message'] ?? ''),
+                $coupon_text,
+                $gift_count
+            );
+        }
+
+        if (!empty($human)) {
+            $order->add_order_note(implode(' || ', $human));
+        }
+
+        WC()->session->__unset('ggw_coupon_gift_conflicts');
     }
 
     /* =========================
