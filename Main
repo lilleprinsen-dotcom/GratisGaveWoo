@@ -141,6 +141,7 @@ final class GGW_Free_Gift_Campaigns {
             'min_subtotal' => 0,
             'exclude_sale' => 0,
             'gift_products' => [],
+            'gift_product_limits' => [],
             'gifts_to_choose' => 1,
             'max_gifts_per_order' => 1,
             'max_per_customer' => 0,
@@ -157,6 +158,17 @@ final class GGW_Free_Gift_Campaigns {
             if (!is_array($c[$k])) $c[$k] = [];
             $c[$k] = array_values(array_filter(array_map('absint', $c[$k])));
         }
+
+        $normalized_limits = [];
+        if (!is_array($c['gift_product_limits'])) {
+            $c['gift_product_limits'] = [];
+        }
+        foreach ($c['gift_product_limits'] as $gift_id => $max_qty) {
+            $gift_id = absint($gift_id);
+            if (!$gift_id || !in_array($gift_id, $c['gift_products'], true)) continue;
+            $normalized_limits[$gift_id] = max(0, intval($max_qty));
+        }
+        $c['gift_product_limits'] = $normalized_limits;
 
         $c['active'] = !empty($c['active']) ? 1 : 0;
         $c['exclude_sale'] = !empty($c['exclude_sale']) ? 1 : 0;
@@ -227,6 +239,30 @@ final class GGW_Free_Gift_Campaigns {
         echo '<p class="description">Søk og velg en eller flere termer.</p>';
     }
 
+    private static function render_gift_limits_fields($campaign) {
+        $gift_ids = array_values(array_filter(array_map('absint', (array) ($campaign['gift_products'] ?? []))));
+        $limits = is_array($campaign['gift_product_limits'] ?? null) ? $campaign['gift_product_limits'] : [];
+
+        if (empty($gift_ids)) {
+            echo '<p class="description">Velg gaveprodukter først for å sette egne maksgrenser per gave.</p>';
+            return;
+        }
+
+        echo '<table class="widefat striped" style="max-width:720px;">';
+        echo '<thead><tr><th>Gaveprodukt</th><th style="width:220px;">Maks antall av denne gaven</th></tr></thead><tbody>';
+        foreach ($gift_ids as $gift_id) {
+            $product = wc_get_product($gift_id);
+            $label = $product ? $product->get_formatted_name() : ('Produkt #' . $gift_id);
+            $max_for_gift = max(0, intval($limits[$gift_id] ?? 0));
+            echo '<tr>';
+            echo '<td>' . wp_kses_post($label) . ' <small style="color:#6b7280;">(#' . esc_html($gift_id) . ')</small></td>';
+            echo '<td><input type="number" min="0" step="1" name="gift_product_limits[' . esc_attr($gift_id) . ']" value="' . esc_attr($max_for_gift) . '" style="width:100%;max-width:160px;">';
+            echo '<p class="description" style="margin:6px 0 0;">0 = ingen spesifikk grense</p></td>';
+            echo '</tr>';
+        }
+        echo '</tbody></table>';
+    }
+
 
     public static function render_admin_page() {
         if (!current_user_can('manage_woocommerce')) return;
@@ -279,6 +315,7 @@ final class GGW_Free_Gift_Campaigns {
                     <tr><th>Minste antall utløserprodukter</th><td><input type="number" name="min_qty" value="<?php echo esc_attr($editing['min_qty']); ?>" min="1"><p class="description">Eksempel: 2 betyr at kunden må ha minst 2 kvalifiserende produkter i kurven.</p></td></tr>
                     <tr><th>Minimum ordrebeløp</th><td><input type="number" name="min_subtotal" value="<?php echo esc_attr($editing['min_subtotal']); ?>" min="0" step="0.01"><p class="description">0 betyr ingen beløpsgrense.</p></td></tr>
                     <tr><th>Gaveprodukter kunden kan få</th><td><?php self::render_product_multiselect('gift_products_csv', $editing['gift_products'], true); ?><p class="description">Disse produktene blir tilgjengelige som gratis gavevalg.</p></td></tr>
+                    <tr><th>Maks per spesifikk gave</th><td><?php self::render_gift_limits_fields($editing); ?><p class="description">Sett valgfri maksgrense per gaveprodukt i samme kampanje.</p></td></tr>
                     <tr><th>Hvor mange gaver kunden kan velge</th><td><input type="number" name="gifts_to_choose" value="<?php echo esc_attr($editing['gifts_to_choose']); ?>" min="1"> gave(r)<p class="description">Antall gavevalg per oppnådd "gave-runde".</p></td></tr>
                     <tr><th>Maks gaver per ordre</th><td><input type="number" name="max_gifts_per_order" value="<?php echo esc_attr($editing['max_gifts_per_order']); ?>" min="1"><p class="description" style="margin-top:6px;">Sikkerhetsgrense for antall gaver i én bestilling. Regel: treff = gulv(trigger-antall / minimum antall trigger). Gaverett = min(maks gaver per ordre, treff × kunden kan velge).</p></td></tr>
 
@@ -369,6 +406,7 @@ final class GGW_Free_Gift_Campaigns {
                 'min_subtotal' => floatval($_POST['min_subtotal'] ?? 0),
                 'exclude_sale' => !empty($_POST['exclude_sale']),
                 'gift_products' => self::csv_to_ids($_POST['gift_products_csv'] ?? ''),
+                'gift_product_limits' => array_map('intval', (array) ($_POST['gift_product_limits'] ?? [])),
                 'gifts_to_choose' => intval($_POST['gifts_to_choose'] ?? 1),
                 'max_gifts_per_order' => intval($_POST['max_gifts_per_order'] ?? 1),
                 'max_per_customer' => intval($_POST['max_per_customer'] ?? 0),
@@ -774,6 +812,11 @@ final class GGW_Free_Gift_Campaigns {
             wp_safe_redirect(wc_get_cart_url());
             exit;
         }
+        if (!self::gift_can_be_used_for_campaign($campaign, $new_parent_id, $cart)) {
+            wc_add_notice(__('Valgt gave har nådd maks antall i kampanjen. Velg en annen gave.', 'ggw'), 'error');
+            wp_safe_redirect(wc_get_cart_url());
+            exit;
+        }
 
         $variation_attributes = $new_variation_id ? self::get_variation_attributes_for_cart($new_variation_id) : [];
         $add_data = self::mark_cart_item_as_gift(
@@ -899,6 +942,7 @@ final class GGW_Free_Gift_Campaigns {
             if (!is_array($posted_gifts)) $posted_gifts = [$posted_gifts];
             if (!is_array($gift_variation_map)) $gift_variation_map = [];
 
+            $planned_counts = [];
             for ($slot = 0; $slot < $required_count; $slot++) {
                 $gift_id = absint($posted_gifts[$slot] ?? 0);
                 $slot_variations = $gift_variation_map[$slot] ?? [];
@@ -913,6 +957,11 @@ final class GGW_Free_Gift_Campaigns {
                     wc_add_notice(sprintf(__('Gave %d er utsolgt nå. Velg en annen gave.', 'ggw'), $slot + 1), 'error');
                     return false;
                 }
+                if (!self::gift_can_be_used_for_campaign($campaign, $gift_id, WC()->cart, $planned_counts)) {
+                    wc_add_notice(sprintf(__('Gave %d har nådd maks antall for denne kampanjen. Velg en annen gave.', 'ggw'), $slot + 1), 'error');
+                    return false;
+                }
+                $planned_counts[$gift_id] = intval($planned_counts[$gift_id] ?? 0) + 1;
             }
         }
 
@@ -934,6 +983,7 @@ final class GGW_Free_Gift_Campaigns {
         if (!is_array($gift_variation_map)) $gift_variation_map = [];
 
         $selected_gifts = [];
+        $planned_counts = [];
         for ($slot = 0; $slot < $required_count; $slot++) {
             $selected_gift = absint($posted_gifts[$slot] ?? 0);
             $slot_variations = $gift_variation_map[$slot] ?? [];
@@ -943,7 +993,11 @@ final class GGW_Free_Gift_Campaigns {
             if (!self::validate_gift_choice($campaign, $selected_gift, $selected_variation)) {
                 continue;
             }
+            if (!self::gift_can_be_used_for_campaign($campaign, $selected_gift, WC()->cart, $planned_counts)) {
+                continue;
+            }
 
+            $planned_counts[$selected_gift] = intval($planned_counts[$selected_gift] ?? 0) + 1;
             $selected_gifts[] = [
                 'gift_parent_id' => $selected_gift,
                 'gift_variation_id' => $selected_variation,
@@ -1056,6 +1110,100 @@ final class GGW_Free_Gift_Campaigns {
         $gifts_to_choose = max(1, intval($campaign['gifts_to_choose'] ?? 1));
         $max_gifts_per_order = max(1, intval($campaign['max_gifts_per_order'] ?? 1));
         return max(0, min($max_gifts_per_order, $rule_hits * $gifts_to_choose));
+    }
+
+    private static function get_campaign_gift_limits($campaign) {
+        $limits = is_array($campaign['gift_product_limits'] ?? null) ? $campaign['gift_product_limits'] : [];
+        $normalized = [];
+
+        foreach ($limits as $gift_id => $max_qty) {
+            $gift_id = absint($gift_id);
+            if (!$gift_id) continue;
+            $normalized[$gift_id] = max(0, intval($max_qty));
+        }
+
+        return $normalized;
+    }
+
+    private static function gift_limit_for_campaign_product($campaign, $gift_parent_id) {
+        $gift_parent_id = absint($gift_parent_id);
+        if (!$gift_parent_id) return 0;
+
+        $limits = self::get_campaign_gift_limits($campaign);
+        return max(0, intval($limits[$gift_parent_id] ?? 0));
+    }
+
+    private static function gift_counts_for_campaign($cart, $campaign_id) {
+        $counts = [];
+        if (!$cart || $cart->is_empty()) return $counts;
+
+        $campaign_id = sanitize_text_field((string) $campaign_id);
+        if ($campaign_id === '') return $counts;
+
+        foreach ($cart->get_cart() as $item) {
+            if (!self::cart_item_is_gift($item)) continue;
+            if (($item['_ggw_campaign_id'] ?? '') !== $campaign_id) continue;
+
+            $gift_parent_id = absint($item['product_id'] ?? 0);
+            if (!$gift_parent_id) continue;
+
+            $counts[$gift_parent_id] = ($counts[$gift_parent_id] ?? 0) + max(1, intval($item['quantity'] ?? 1));
+        }
+
+        return $counts;
+    }
+
+    private static function gift_can_be_used_for_campaign($campaign, $gift_parent_id, $cart = null, $planned_counts = []) {
+        $gift_parent_id = absint($gift_parent_id);
+        if (!$gift_parent_id) return false;
+
+        $limit = self::gift_limit_for_campaign_product($campaign, $gift_parent_id);
+        if ($limit < 1) return true;
+
+        $campaign_id = sanitize_text_field($campaign['id'] ?? '');
+        $existing_count = 0;
+        if ($campaign_id !== '' && $cart) {
+            $existing_counts = self::gift_counts_for_campaign($cart, $campaign_id);
+            $existing_count = intval($existing_counts[$gift_parent_id] ?? 0);
+        }
+
+        $planned = max(0, intval($planned_counts[$gift_parent_id] ?? 0));
+        return ($existing_count + $planned) < $limit;
+    }
+
+    private static function apply_campaign_gift_limits_to_desired($campaign, $desired_gift_keys, $selected_map, $existing_counts = []) {
+        $desired_gift_keys = is_array($desired_gift_keys) ? $desired_gift_keys : [];
+        $selected_map = is_array($selected_map) ? $selected_map : [];
+        $existing_counts = is_array($existing_counts) ? $existing_counts : [];
+
+        $limits = self::get_campaign_gift_limits($campaign);
+        if (empty($limits)) return $desired_gift_keys;
+
+        $allowed = [];
+        $planned_counts = [];
+
+        foreach ($desired_gift_keys as $gift_key) {
+            if (empty($selected_map[$gift_key])) continue;
+            $gift_parent_id = absint($selected_map[$gift_key]['gift_parent_id'] ?? 0);
+            if (!$gift_parent_id) continue;
+
+            $limit = max(0, intval($limits[$gift_parent_id] ?? 0));
+            if ($limit < 1) {
+                $allowed[] = $gift_key;
+                continue;
+            }
+
+            $already_in_cart = max(0, intval($existing_counts[$gift_parent_id] ?? 0));
+            $planned = max(0, intval($planned_counts[$gift_parent_id] ?? 0));
+            if (($already_in_cart + $planned) >= $limit) {
+                continue;
+            }
+
+            $planned_counts[$gift_parent_id] = $planned + 1;
+            $allowed[] = $gift_key;
+        }
+
+        return $allowed;
     }
 
     private static function cart_item_target_product_id($item) {
@@ -1469,6 +1617,8 @@ final class GGW_Free_Gift_Campaigns {
                 }
             }
 
+            $desired = self::apply_campaign_gift_limits_to_desired($c, $desired, $info['selected_gift_variations']);
+
             foreach ($desired as $gift_key) {
                 $gift_parent_id = absint($info['selected_gift_variations'][$gift_key]['gift_parent_id'] ?? 0);
                 $gift_variation_id = absint($info['selected_gift_variations'][$gift_key]['gift_variation_id'] ?? 0);
@@ -1600,6 +1750,14 @@ final class GGW_Free_Gift_Campaigns {
             $gifts = array_values(array_filter($c['gift_products'], [__CLASS__, 'gift_product_is_available']));
             if (empty($gifts)) continue;
 
+            $gift_counts_for_campaign = self::gift_counts_for_campaign($cart, $cid);
+            $gifts = array_values(array_filter($gifts, function($gift_id) use ($c, $gift_counts_for_campaign) {
+                $limit = self::gift_limit_for_campaign_product($c, $gift_id);
+                if ($limit < 1) return true;
+                return intval($gift_counts_for_campaign[$gift_id] ?? 0) < $limit;
+            }));
+            if (empty($gifts)) continue;
+
             $missing[$cid] = [
                 'campaign' => $c,
                 'gifts' => $gifts,
@@ -1667,6 +1825,7 @@ final class GGW_Free_Gift_Campaigns {
 
         foreach ($missing as $cid => $row) {
             $required = max(1, intval($row['missing_count'] ?? 1));
+            $planned_counts = [];
             for ($slot = 0; $slot < $required; $slot++) {
                 $gift = absint($posted[$cid][$slot] ?? 0);
                 $slot_variations = $posted_variations[$cid][$slot] ?? [];
@@ -1682,7 +1841,13 @@ final class GGW_Free_Gift_Campaigns {
                 }
                 if (!self::validate_gift_choice($row['campaign'], $gift, $gift_variation)) {
                     wc_add_notice(__('Valgt variant er ikke tilgjengelig nå. Velg på nytt.', 'ggw'), 'error');
+                    continue;
                 }
+                if (!self::gift_can_be_used_for_campaign($row['campaign'], $gift, WC()->cart, $planned_counts)) {
+                    wc_add_notice(__('Valgt gave har nådd maks antall i kampanjen. Velg en annen gave.', 'ggw'), 'error');
+                    continue;
+                }
+                $planned_counts[$gift] = intval($planned_counts[$gift] ?? 0) + 1;
             }
         }
     }
@@ -1718,6 +1883,7 @@ final class GGW_Free_Gift_Campaigns {
             $required = max(1, intval($row['missing_count'] ?? 1));
 
             $selected_for_campaign = [];
+            $planned_counts = [];
             for ($slot = 0; $slot < $required; $slot++) {
                 $gift_parent_id = absint($choices[$slot] ?? 0);
                 $slot_variations = $posted_variations[$cid][$slot] ?? [];
@@ -1732,6 +1898,11 @@ final class GGW_Free_Gift_Campaigns {
                     wc_add_notice(__('Valgt alternativ er ikke gyldig eller utsolgt. Prøv igjen.', 'ggw'), 'error');
                     continue;
                 }
+                if (!self::gift_can_be_used_for_campaign($row['campaign'], $gift_parent_id, $cart, $planned_counts)) {
+                    wc_add_notice(__('Valgt gave har nådd maks antall i kampanjen. Velg en annen gave.', 'ggw'), 'error');
+                    continue;
+                }
+                $planned_counts[$gift_parent_id] = intval($planned_counts[$gift_parent_id] ?? 0) + 1;
                 $selected_for_campaign[] = [
                     'gift_parent_id' => $gift_parent_id,
                     'gift_variation_id' => $gift_variation_id,
