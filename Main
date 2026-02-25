@@ -701,6 +701,53 @@ final class GGW_Free_Gift_Campaigns {
         return max(0, min($max_gifts_per_order, $rule_hits * $gifts_to_choose));
     }
 
+    private static function cart_item_target_product_id($item) {
+        return !empty($item['variation_id']) ? absint($item['variation_id']) : absint($item['product_id'] ?? 0);
+    }
+
+    private static function cart_item_counts_for_campaign_trigger($item, $campaign) {
+        if (empty($campaign['exclude_sale'])) return true;
+
+        $target_id = self::cart_item_target_product_id($item);
+        if (!$target_id) return false;
+
+        $product = wc_get_product($target_id);
+        if (!$product) return false;
+
+        return !$product->is_on_sale();
+    }
+
+    private static function evaluate_campaign_trigger_state($campaign, $qty, $subtotal, $campaign_id = '') {
+        $qty = max(0, intval($qty));
+        $subtotal = max(0.0, floatval($subtotal));
+
+        if (!self::campaign_active_now($campaign)) {
+            return ['qualifies' => false, 'entitled_total' => 0];
+        }
+
+        if ($qty < intval($campaign['min_qty'])) {
+            return ['qualifies' => false, 'entitled_total' => 0];
+        }
+
+        if ($subtotal < floatval($campaign['min_subtotal'])) {
+            return ['qualifies' => false, 'entitled_total' => 0];
+        }
+
+        if (!empty($campaign['max_per_customer']) && $campaign_id !== '') {
+            $used = self::customer_used_count_for_campaign($campaign_id);
+            if ($used >= intval($campaign['max_per_customer'])) {
+                return ['qualifies' => false, 'entitled_total' => 0];
+            }
+        }
+
+        $entitled_total = self::campaign_entitled_total($campaign, $qty);
+        if ($entitled_total < 1) {
+            return ['qualifies' => false, 'entitled_total' => 0];
+        }
+
+        return ['qualifies' => true, 'entitled_total' => $entitled_total];
+    }
+
     public static function sync_cart_gifts($cart) {
         if (is_admin() && !defined('DOING_AJAX')) return;
         if (!$cart || $cart->is_empty()) return;
@@ -741,6 +788,8 @@ final class GGW_Free_Gift_Campaigns {
 
             $qty = intval($item['quantity']);
             $line_subtotal = isset($item['line_subtotal']) ? floatval($item['line_subtotal']) : 0.0;
+            if (!self::cart_item_counts_for_campaign_trigger($item, $campaign)) continue;
+
             $triggers[$campaign['id']]['qty'] += $qty;
             $triggers[$campaign['id']]['subtotal'] += $line_subtotal;
             $triggers[$campaign['id']]['trigger_keys'][] = $key;
@@ -763,17 +812,9 @@ final class GGW_Free_Gift_Campaigns {
         foreach ($triggers as $cid => $info) {
             $c = $info['campaign'];
 
-            if (!self::campaign_active_now($c)) continue;
-            if ($info['qty'] < intval($c['min_qty'])) continue;
-            if ($info['subtotal'] < floatval($c['min_subtotal'])) continue;
-
-            if ($c['max_per_customer'] > 0) {
-                $used = self::customer_used_count_for_campaign($cid);
-                if ($used >= intval($c['max_per_customer'])) continue;
-            }
-
-            $entitled_total = self::campaign_entitled_total($c, $info['qty']);
-            if ($entitled_total < 1) continue;
+            $trigger_state = self::evaluate_campaign_trigger_state($c, $info['qty'], $info['subtotal'], $cid);
+            if (empty($trigger_state['qualifies'])) continue;
+            $entitled_total = intval($trigger_state['entitled_total']);
 
             $selected = array_values(array_unique($info['selected_gifts']));
 
@@ -902,7 +943,7 @@ final class GGW_Free_Gift_Campaigns {
             $pid = !empty($item['variation_id']) ? $item['variation_id'] : $item['product_id'];
             $c = self::get_best_campaign_for_product($pid);
             if (!$c) continue;
-            if (!self::campaign_active_now($c)) continue;
+            if (!self::cart_item_counts_for_campaign_trigger($item, $c)) continue;
 
             if (!isset($triggers_by_campaign[$c['id']])) {
                 $triggers_by_campaign[$c['id']] = ['campaign' => $c, 'qty' => 0, 'subtotal' => 0.0, 'trigger_keys' => []];
@@ -915,16 +956,11 @@ final class GGW_Free_Gift_Campaigns {
 
         foreach ($triggers_by_campaign as $cid => $row) {
             $c = $row['campaign'];
-            if ($row['qty'] < intval($c['min_qty'])) continue;
-            if ($row['subtotal'] < floatval($c['min_subtotal'])) continue;
-            if ($c['max_per_customer'] > 0) {
-                $used = self::customer_used_count_for_campaign($cid);
-                if ($used >= intval($c['max_per_customer'])) continue;
-            }
+            $trigger_state = self::evaluate_campaign_trigger_state($c, $row['qty'], $row['subtotal'], $cid);
+            if (empty($trigger_state['qualifies'])) continue;
             if (empty($c['require_choice']) || !empty($c['auto_gift'])) continue;
 
-            $entitled_total = self::campaign_entitled_total($c, $row['qty']);
-            if ($entitled_total < 1) continue;
+            $entitled_total = intval($trigger_state['entitled_total']);
 
             $gift_count = intval($gift_count_by_campaign[$cid] ?? 0);
             if ($gift_count >= $entitled_total) continue;
