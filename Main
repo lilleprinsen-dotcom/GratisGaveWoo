@@ -155,6 +155,8 @@ final class GGW_Free_Gift_Campaigns {
             'gift_image_custom_min_width' => 120,
             'gift_image_custom_aspect_ratio' => '1/1',
             'gift_image_custom_max_grid_width' => 560,
+            'gift_image_shape' => 'square',
+            'gift_image_custom_object_fit' => 'cover',
         ];
         $c = wp_parse_args($c, $defaults);
 
@@ -189,6 +191,8 @@ final class GGW_Free_Gift_Campaigns {
         $c['gift_image_custom_min_width'] = max(80, min(260, intval($c['gift_image_custom_min_width'] ?? 120)));
         $c['gift_image_custom_max_grid_width'] = max(320, min(1200, intval($c['gift_image_custom_max_grid_width'] ?? 560)));
         $c['gift_image_custom_aspect_ratio'] = self::sanitize_gift_image_aspect_ratio($c['gift_image_custom_aspect_ratio'] ?? '1/1');
+        $c['gift_image_shape'] = self::sanitize_gift_image_shape($c['gift_image_shape'] ?? 'square');
+        $c['gift_image_custom_object_fit'] = self::sanitize_gift_image_object_fit($c['gift_image_custom_object_fit'] ?? 'cover');
 
         return $c;
     }
@@ -197,35 +201,59 @@ final class GGW_Free_Gift_Campaigns {
         return [
             'compact' => [
                 'label' => 'Kompakt rutenett',
-                'description' => 'Små gavekort med jevn 1:1-beskjæring.',
-                'min_width' => 96,
+                'description' => 'Små gavekort med tett oppsett (anbefalt for mange produkter).',
+                'min_width' => 102,
                 'aspect_ratio' => '1/1',
-                'max_grid_width' => 500,
+                'max_grid_width' => 520,
                 'object_fit' => 'cover',
             ],
             'balanced' => [
-                'label' => 'Balansert (anbefalt)',
-                'description' => 'God lesbarhet uten at valgkortene blir for store.',
-                'min_width' => 120,
+                'label' => 'Balansert',
+                'description' => 'God lesbarhet uten at gavekortene blir for store.',
+                'min_width' => 132,
                 'aspect_ratio' => '1/1',
-                'max_grid_width' => 640,
+                'max_grid_width' => 680,
                 'object_fit' => 'cover',
             ],
-            'wide' => [
-                'label' => 'Bredt kort',
-                'description' => 'Litt bredere kort med 4:3-forhold.',
-                'min_width' => 140,
-                'aspect_ratio' => '4/3',
+            'airy' => [
+                'label' => 'Luftig kort',
+                'description' => 'Mer avstand og litt større kort for enklere klikk.',
+                'min_width' => 150,
+                'aspect_ratio' => '1/1',
                 'max_grid_width' => 760,
                 'object_fit' => 'cover',
             ],
-            'list' => [
-                'label' => 'Listevisning',
-                'description' => 'Store kort i færre kolonner med 16:9-forhold.',
-                'min_width' => 220,
-                'aspect_ratio' => '16/9',
-                'max_grid_width' => 900,
+            'wide' => [
+                'label' => 'Bredt kort (4:3)',
+                'description' => 'Bredere bilder som viser mer av produktet.',
+                'min_width' => 160,
+                'aspect_ratio' => '4/3',
+                'max_grid_width' => 820,
                 'object_fit' => 'cover',
+            ],
+            'portrait' => [
+                'label' => 'Portrett (3:4)',
+                'description' => 'Høyere kort som passer for stående produktbilder.',
+                'min_width' => 132,
+                'aspect_ratio' => '3/4',
+                'max_grid_width' => 680,
+                'object_fit' => 'cover',
+            ],
+            'list' => [
+                'label' => 'Listevisning (16:9)',
+                'description' => 'Store kort i færre kolonner med god tittelplass.',
+                'min_width' => 230,
+                'aspect_ratio' => '16/9',
+                'max_grid_width' => 980,
+                'object_fit' => 'cover',
+            ],
+            'full-image' => [
+                'label' => 'Fullt bilde',
+                'description' => 'Vis hele bildet uten beskjæring.',
+                'min_width' => 150,
+                'aspect_ratio' => '1/1',
+                'max_grid_width' => 760,
+                'object_fit' => 'contain',
             ],
         ];
     }
@@ -237,6 +265,16 @@ final class GGW_Free_Gift_Campaigns {
             return $layout;
         }
         return 'compact';
+    }
+
+    private static function sanitize_gift_image_shape($shape) {
+        $shape = sanitize_key($shape);
+        return in_array($shape, ['square', 'round'], true) ? $shape : 'square';
+    }
+
+    private static function sanitize_gift_image_object_fit($fit) {
+        $fit = sanitize_key($fit);
+        return in_array($fit, ['cover', 'contain'], true) ? $fit : 'cover';
     }
 
     private static function sanitize_gift_image_aspect_ratio($ratio) {
@@ -262,7 +300,8 @@ final class GGW_Free_Gift_Campaigns {
                 'min_width' => max(80, min(260, intval($campaign['gift_image_custom_min_width'] ?? 120))),
                 'aspect_ratio' => self::sanitize_gift_image_aspect_ratio($campaign['gift_image_custom_aspect_ratio'] ?? '1/1'),
                 'max_grid_width' => max(320, min(1200, intval($campaign['gift_image_custom_max_grid_width'] ?? 560))),
-                'object_fit' => 'cover',
+                'object_fit' => self::sanitize_gift_image_object_fit($campaign['gift_image_custom_object_fit'] ?? 'cover'),
+                'shape' => self::sanitize_gift_image_shape($campaign['gift_image_shape'] ?? 'square'),
             ];
         }
 
@@ -275,6 +314,7 @@ final class GGW_Free_Gift_Campaigns {
             'aspect_ratio' => self::sanitize_gift_image_aspect_ratio($preset['aspect_ratio']),
             'max_grid_width' => intval($preset['max_grid_width']),
             'object_fit' => in_array($preset['object_fit'], ['cover', 'contain'], true) ? $preset['object_fit'] : 'cover',
+            'shape' => self::sanitize_gift_image_shape($campaign['gift_image_shape'] ?? 'square'),
         ];
     }
 
@@ -292,7 +332,8 @@ final class GGW_Free_Gift_Campaigns {
 
         wp_enqueue_script('wc-enhanced-select');
 
-        wp_add_inline_style('woocommerce_admin_styles', '.ggw-multiselect{min-width:420px;max-width:100%;}');
+        wp_add_inline_style('woocommerce_admin_styles', '.ggw-multiselect{min-width:420px;max-width:100%;}.ggw-gift-appearance-controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;max-width:900px}.ggw-gift-preview{margin-top:12px;border:1px solid #d1d5db;border-radius:10px;padding:12px;background:#fff;max-width:900px}.ggw-gift-preview-grid{display:grid;gap:10px}.ggw-gift-preview-card{border:1px solid #d1d5db;border-radius:10px;padding:8px;background:#fff}.ggw-gift-preview-media{width:100%;aspect-ratio:1/1;border-radius:8px;overflow:hidden;background:#f3f4f6;display:flex;align-items:center;justify-content:center}.ggw-gift-preview-media img{width:100%;height:100%;object-fit:cover;display:block}.ggw-gift-preview-title{margin-top:6px;font-size:12px;line-height:1.35;color:#111827;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:32px}.ggw-gift-preview-help{font-size:12px;color:#4b5563;margin-top:8px}');
+        wp_add_inline_script('wc-enhanced-select', '(function(){var init=function(){var panel=document.querySelector("[data-ggw-gift-config]");if(!panel){return;}var layoutField=panel.querySelector("[name=gift_image_layout]");var shapeField=panel.querySelector("[name=gift_image_shape]");var minField=panel.querySelector("[name=gift_image_custom_min_width]");var ratioField=panel.querySelector("[name=gift_image_custom_aspect_ratio]");var maxField=panel.querySelector("[name=gift_image_custom_max_grid_width]");var fitField=panel.querySelector("[name=gift_image_custom_object_fit]");var customWrap=panel.querySelector("[data-ggw-custom-controls]");var previewGrid=panel.querySelector("[data-ggw-preview-grid]");var previewMedia=panel.querySelectorAll("[data-ggw-preview-media]");var previewImgs=panel.querySelectorAll("[data-ggw-preview-image]");var presets={};panel.querySelectorAll("option[data-ggw-preset]").forEach(function(opt){presets[opt.value]={min:parseInt(opt.getAttribute("data-min-width")||"120",10),ratio:opt.getAttribute("data-aspect-ratio")||"1/1",max:parseInt(opt.getAttribute("data-max-grid-width")||"560",10),fit:opt.getAttribute("data-object-fit")||"cover"};});var clamp=function(v,min,max){v=parseInt(v||0,10);if(isNaN(v)){v=min;}return Math.max(min,Math.min(max,v));};var parseRatio=function(v){var m=String(v||"").trim().match(/^([0-9]+(?:\.[0-9]+)?)\s*\/\s*([0-9]+(?:\.[0-9]+)?)/);if(!m){return "1 / 1";}var w=parseFloat(m[1]);var h=parseFloat(m[2]);if(!w||!h){return "1 / 1";}return w+" / "+h;};var update=function(){var layout=layoutField?layoutField.value:"compact";var shape=shapeField?shapeField.value:"square";var isCustom=layout==="custom";if(customWrap){customWrap.style.display=isCustom?"grid":"none";}var chosen=isCustom?{min:clamp(minField&&minField.value,80,260),ratio:ratioField&&ratioField.value||"1/1",max:clamp(maxField&&maxField.value,320,1200),fit:fitField&&fitField.value||"cover"}:(presets[layout]||presets.compact||{min:120,ratio:"1/1",max:560,fit:"cover"});if(previewGrid){previewGrid.style.gridTemplateColumns="repeat(auto-fit,minmax("+chosen.min+"px,1fr))";previewGrid.style.maxWidth=chosen.max+"px";}previewMedia.forEach(function(el){el.style.aspectRatio=parseRatio(chosen.ratio);el.style.borderRadius=shape==="round"?"999px":"8px";});previewImgs.forEach(function(el){el.style.objectFit=chosen.fit;});};[layoutField,shapeField,minField,ratioField,maxField,fitField].forEach(function(el){if(el){el.addEventListener("input",update);el.addEventListener("change",update);}});update();};if(document.readyState==="loading"){document.addEventListener("DOMContentLoaded",init);}else{init();}})();');
     }
 
     private static function render_product_multiselect($name, $selected_ids, $required = false) {
@@ -413,21 +454,45 @@ final class GGW_Free_Gift_Campaigns {
                     <tr><th>Maks per spesifikk gave</th><td><?php self::render_gift_limits_fields($editing); ?><p class="description">Sett valgfri maksgrense per gaveprodukt i samme kampanje.</p></td></tr>
                     <tr><th>Hvor mange gaver kunden kan velge</th><td><input type="number" name="gifts_to_choose" value="<?php echo esc_attr($editing['gifts_to_choose']); ?>" min="1"> gave(r)<p class="description">Antall gavevalg per oppnådd "gave-runde".</p></td></tr>
                     <tr><th>Maks gaver per ordre</th><td><input type="number" name="max_gifts_per_order" value="<?php echo esc_attr($editing['max_gifts_per_order']); ?>" min="1"><p class="description" style="margin-top:6px;">Sikkerhetsgrense for antall gaver i én bestilling. Regel: treff = gulv(trigger-antall / minimum antall trigger). Gaverett = min(maks gaver per ordre, treff × kunden kan velge).</p></td></tr>
-                    <tr><th>Bildevisning for gavevalg</th><td>
+                    <tr><th>Bildevisning for gavevalg</th><td data-ggw-gift-config>
                         <?php $gift_layout_presets = self::get_gift_image_layout_presets(); ?>
-                        <select name="gift_image_layout">
-                            <?php foreach ($gift_layout_presets as $layout_key => $layout_preset): ?>
-                                <option value="<?php echo esc_attr($layout_key); ?>" <?php selected($editing['gift_image_layout'] ?? 'compact', $layout_key); ?>><?php echo esc_html($layout_preset['label']); ?></option>
-                            <?php endforeach; ?>
-                            <option value="custom" <?php selected($editing['gift_image_layout'] ?? 'compact', 'custom'); ?>>Custom</option>
-                        </select>
-                        <p class="description" style="margin-top:6px;">Velg en preset som styrer størrelse/format på gavebildene, eller bruk custom under.</p>
-                        <div style="display:flex;flex-wrap:wrap;gap:12px;margin-top:8px;">
-                            <label>Custom min-kortbredde (px)<br><input type="number" name="gift_image_custom_min_width" min="80" max="260" value="<?php echo esc_attr($editing['gift_image_custom_min_width']); ?>"></label>
-                            <label>Custom sideforhold<br><input type="text" name="gift_image_custom_aspect_ratio" value="<?php echo esc_attr($editing['gift_image_custom_aspect_ratio']); ?>" placeholder="1/1"></label>
-                            <label>Custom maks grid-bredde (px)<br><input type="number" name="gift_image_custom_max_grid_width" min="320" max="1200" value="<?php echo esc_attr($editing['gift_image_custom_max_grid_width']); ?>"></label>
+                        <div class="ggw-gift-appearance-controls">
+                            <label>Preset<br>
+                                <select name="gift_image_layout">
+                                    <?php foreach ($gift_layout_presets as $layout_key => $layout_preset): ?>
+                                        <option value="<?php echo esc_attr($layout_key); ?>" data-ggw-preset="1" data-min-width="<?php echo esc_attr(intval($layout_preset['min_width'])); ?>" data-aspect-ratio="<?php echo esc_attr($layout_preset['aspect_ratio']); ?>" data-max-grid-width="<?php echo esc_attr(intval($layout_preset['max_grid_width'])); ?>" data-object-fit="<?php echo esc_attr($layout_preset['object_fit']); ?>" <?php selected($editing['gift_image_layout'] ?? 'compact', $layout_key); ?>><?php echo esc_html($layout_preset['label']); ?></option>
+                                    <?php endforeach; ?>
+                                    <option value="custom" <?php selected($editing['gift_image_layout'] ?? 'compact', 'custom'); ?>>Tilpasset</option>
+                                </select>
+                            </label>
+                            <label>Form på bilde<br>
+                                <select name="gift_image_shape">
+                                    <option value="square" <?php selected($editing['gift_image_shape'] ?? 'square', 'square'); ?>>Kvadratisk kort</option>
+                                    <option value="round" <?php selected($editing['gift_image_shape'] ?? 'square', 'round'); ?>>Rundt kort</option>
+                                </select>
+                            </label>
                         </div>
-                        <p class="description">Custom-verdier brukes kun når "Custom" er valgt.</p>
+                        <p class="description" style="margin-top:6px;">Velg preset for rask justering, eller bruk tilpassede verdier. Forhåndsvisningen oppdateres live.</p>
+                        <div class="ggw-gift-appearance-controls" data-ggw-custom-controls style="margin-top:8px;">
+                            <label>Tilpasset min-kortbredde (px)<br><input type="number" name="gift_image_custom_min_width" min="80" max="260" value="<?php echo esc_attr($editing['gift_image_custom_min_width']); ?>"></label>
+                            <label>Tilpasset sideforhold<br><input type="text" name="gift_image_custom_aspect_ratio" value="<?php echo esc_attr($editing['gift_image_custom_aspect_ratio']); ?>" placeholder="1/1"></label>
+                            <label>Tilpasset maks grid-bredde (px)<br><input type="number" name="gift_image_custom_max_grid_width" min="320" max="1200" value="<?php echo esc_attr($editing['gift_image_custom_max_grid_width']); ?>"></label>
+                            <label>Tilpasset bilde-tilpasning<br>
+                                <select name="gift_image_custom_object_fit">
+                                    <option value="cover" <?php selected($editing['gift_image_custom_object_fit'] ?? 'cover', 'cover'); ?>>Beskjær (cover)</option>
+                                    <option value="contain" <?php selected($editing['gift_image_custom_object_fit'] ?? 'cover', 'contain'); ?>>Vis hele (contain)</option>
+                                </select>
+                            </label>
+                        </div>
+                        <div class="ggw-gift-preview">
+                            <strong>Live forhåndsvisning</strong>
+                            <div class="ggw-gift-preview-grid" data-ggw-preview-grid style="margin-top:8px;">
+                                <div class="ggw-gift-preview-card"><span class="ggw-gift-preview-media" data-ggw-preview-media><img data-ggw-preview-image src="<?php echo esc_url(wc_placeholder_img_src('woocommerce_thumbnail')); ?>" alt="Eksempel gave"></span><span class="ggw-gift-preview-title">Kattnakken eksempelgave</span></div>
+                                <div class="ggw-gift-preview-card"><span class="ggw-gift-preview-media" data-ggw-preview-media><img data-ggw-preview-image src="<?php echo esc_url(wc_placeholder_img_src('woocommerce_thumbnail')); ?>" alt="Eksempel gave"></span><span class="ggw-gift-preview-title">Ullsokk med mønster</span></div>
+                                <div class="ggw-gift-preview-card"><span class="ggw-gift-preview-media" data-ggw-preview-media><img data-ggw-preview-image src="<?php echo esc_url(wc_placeholder_img_src('woocommerce_thumbnail')); ?>" alt="Eksempel gave"></span><span class="ggw-gift-preview-title">Reparasjonslapper til regntøy</span></div>
+                            </div>
+                            <div class="ggw-gift-preview-help">Tips: Hvis kort overlapper i frontend, velg «Kompakt rutenett» eller øk maks grid-bredde.</div>
+                        </div>
                     </td></tr>
 
                     <tr><th colspan="2"><h2 style="margin:12px 0 0;">Tekster kunden ser</h2><p class="description" style="margin:6px 0 0;">Disse feltene styrer teksten i gaveboksen på produktsiden.</p></th></tr>
@@ -531,6 +596,8 @@ final class GGW_Free_Gift_Campaigns {
                 'gift_image_custom_min_width' => intval($_POST['gift_image_custom_min_width'] ?? 120),
                 'gift_image_custom_aspect_ratio' => sanitize_text_field(wp_unslash($_POST['gift_image_custom_aspect_ratio'] ?? '1/1')),
                 'gift_image_custom_max_grid_width' => intval($_POST['gift_image_custom_max_grid_width'] ?? 560),
+                'gift_image_shape' => sanitize_key(wp_unslash($_POST['gift_image_shape'] ?? 'square')),
+                'gift_image_custom_object_fit' => sanitize_key(wp_unslash($_POST['gift_image_custom_object_fit'] ?? 'cover')),
             ]);
 
             if (empty($new['title']) || empty($new['gift_products'])) {
@@ -995,8 +1062,10 @@ final class GGW_Free_Gift_Campaigns {
             $grid_max_width = max(320, intval($gift_card_layout['max_grid_width'] ?? 560));
             $card_aspect_ratio = self::sanitize_gift_image_aspect_ratio($gift_card_layout['aspect_ratio'] ?? '1/1');
             $card_object_fit = in_array($gift_card_layout['object_fit'] ?? 'cover', ['cover', 'contain'], true) ? $gift_card_layout['object_fit'] : 'cover';
+            $card_shape = self::sanitize_gift_image_shape($gift_card_layout['shape'] ?? ($campaign['gift_image_shape'] ?? 'square'));
+            $card_media_radius = $card_shape === 'round' ? '999px' : '8px';
 
-            echo '<style>.ggw-gift-choice-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(' . esc_attr($grid_min_width) . 'px,1fr));gap:8px;max-width:' . esc_attr($grid_max_width) . 'px}.ggw-gift-card{display:block;position:relative;border:1px solid #d1d5db;border-radius:10px;padding:8px;background:#fff;cursor:pointer;transition:border-color .2s,box-shadow .2s;min-width:0}.ggw-gift-card input{position:absolute;opacity:0;pointer-events:none}.ggw-gift-card-media{width:100%;aspect-ratio:' . esc_attr($card_aspect_ratio) . ';border-radius:8px;overflow:hidden;background:#f3f4f6;margin-bottom:6px}.ggw-gift-card-media img{width:100%;height:100%;max-width:100%;object-fit:' . esc_attr($card_object_fit) . ';display:block}.ggw-gift-card-title{font-size:12px;line-height:1.35;color:#111827;display:block;word-break:break-word}.ggw-gift-card.is-selected{border-color:#111827;box-shadow:0 0 0 1px #111827 inset}</style>';
+            echo '<style>.ggw-gift-choice-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(' . esc_attr($grid_min_width) . 'px,1fr));gap:12px;max-width:min(100%,' . esc_attr($grid_max_width) . 'px);align-items:start}.ggw-gift-card{display:flex;flex-direction:column;position:relative;border:1px solid #d1d5db;border-radius:10px;padding:8px;background:#fff;cursor:pointer;transition:border-color .2s,box-shadow .2s;min-width:0;height:100%}.ggw-gift-card input{position:absolute;opacity:0;pointer-events:none}.ggw-gift-card-media{width:100%;aspect-ratio:' . esc_attr($card_aspect_ratio) . ';border-radius:' . esc_attr($card_media_radius) . ';overflow:hidden;background:#f3f4f6;margin-bottom:8px}.ggw-gift-card-media img{width:100%;height:100%;max-width:100%;object-fit:' . esc_attr($card_object_fit) . ';display:block}.ggw-gift-card-title{font-size:13px;line-height:1.35;color:#111827;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word;min-height:52px}.ggw-gift-card.is-selected{border-color:#111827;box-shadow:0 0 0 1px #111827 inset}</style>';
 
             for ($slot = 0; $slot < $choice_slots; $slot++) {
                 $slot_number = $slot + 1;
