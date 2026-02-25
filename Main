@@ -1,1 +1,772 @@
+<?php
+/**
+ * Gratis gave-kampanjer for WooCommerce (én fil / code snippet)
+ * Version: 1.0.0
+ *
+ * Bruk:
+ * - Legg inn i Code Snippets (Run everywhere) eller child theme functions.php
+ * - Gå til WooCommerce -> Gratis gave-kampanjer
+ *
+ * OBS:
+ * - Dette er en robust MVP med fokus på ytelse og server-side validering.
+ * - Test alltid i staging før produksjon.
+ */
+
+if (!defined('ABSPATH')) { exit; }
+if (!class_exists('WooCommerce')) { return; }
+
+final class GGW_Free_Gift_Campaigns {
+    const OPT_KEY = 'ggw_campaigns_v1';
+    const NONCE_ACTION = 'ggw_campaigns_save';
+    const TRANSIENT_CAMPAIGN_BY_PRODUCT = 'ggw_campaign_by_product_';
+    const VERSION = '1.0.0';
+
+    public static function init() {
+        // Admin
+        add_action('admin_menu', [__CLASS__, 'admin_menu']);
+        add_action('admin_init', [__CLASS__, 'handle_admin_post']);
+
+        // Product page UX
+        add_action('woocommerce_before_add_to_cart_button', [__CLASS__, 'render_product_gift_ui']);
+        add_filter('woocommerce_add_to_cart_validation', [__CLASS__, 'validate_add_to_cart'], 10, 5);
+        add_filter('woocommerce_add_cart_item_data', [__CLASS__, 'capture_add_cart_data'], 10, 4);
+
+        // Cart synchronization + pricing
+        add_action('woocommerce_before_calculate_totals', [__CLASS__, 'sync_cart_gifts'], 20);
+        add_action('woocommerce_cart_loaded_from_session', [__CLASS__, 'mark_session_loaded']);
+        add_filter('woocommerce_cart_item_name', [__CLASS__, 'label_gift_cart_item'], 10, 3);
+        add_filter('woocommerce_get_item_data', [__CLASS__, 'display_cart_item_meta'], 10, 2);
+        add_action('woocommerce_remove_cart_item', [__CLASS__, 'cleanup_removed_trigger'], 10, 2);
+
+        // Checkout fallback
+        add_action('woocommerce_review_order_before_payment', [__CLASS__, 'render_checkout_fallback']);
+        add_action('woocommerce_checkout_process', [__CLASS__, 'checkout_validate_fallback_choice']);
+        add_action('woocommerce_checkout_update_order_meta', [__CLASS__, 'checkout_apply_fallback_choice']);
+
+        // Order metadata
+        add_action('woocommerce_checkout_create_order_line_item', [__CLASS__, 'add_order_line_meta'], 10, 4);
+
+        // Tiny cache invalidation signal
+        add_action('save_post_product', [__CLASS__, 'soft_invalidate_cache']);
+        add_action('edited_product_cat', [__CLASS__, 'soft_invalidate_cache']);
+        add_action('edited_product_tag', [__CLASS__, 'soft_invalidate_cache']);
+    }
+
+    /* =========================
+     * ADMIN
+     * ========================= */
+    public static function admin_menu() {
+        add_submenu_page(
+            'woocommerce',
+            'Gratis gave-kampanjer',
+            'Gratis gave-kampanjer',
+            'manage_woocommerce',
+            'ggw-free-gifts',
+            [__CLASS__, 'render_admin_page']
+        );
+    }
+
+    public static function get_campaigns() {
+        $rows = get_option(self::OPT_KEY, []);
+        if (!is_array($rows)) return [];
+        // normalize + sort by priority desc
+        foreach ($rows as &$c) {
+            $c = self::normalize_campaign($c);
+        }
+        usort($rows, function($a, $b){
+            return intval($b['priority']) <=> intval($a['priority']);
+        });
+        return $rows;
+    }
+
+    private static function normalize_campaign($c) {
+        $defaults = [
+            'id' => wp_generate_uuid4(),
+            'title' => '',
+            'active' => 1,
+            'priority' => 10,
+            'start' => '',
+            'end' => '',
+            'trigger_products' => [],
+            'trigger_categories' => [],
+            'trigger_tags' => [],
+            'min_qty' => 1,
+            'min_subtotal' => 0,
+            'exclude_sale' => 0,
+            'gift_products' => [],
+            'gifts_to_choose' => 1,
+            'max_gifts_per_order' => 1,
+            'max_per_customer' => 0,
+            'require_choice' => 1,
+            'auto_gift' => 0,
+            'headline' => 'Gratis gave tilgjengelig',
+            'description' => '',
+            'badge' => 'Gratis gave',
+            'cta' => 'Velg gave',
+        ];
+        $c = wp_parse_args($c, $defaults);
+
+        foreach (['trigger_products','trigger_categories','trigger_tags','gift_products'] as $k) {
+            if (!is_array($c[$k])) $c[$k] = [];
+            $c[$k] = array_values(array_filter(array_map('absint', $c[$k])));
+        }
+
+        $c['active'] = !empty($c['active']) ? 1 : 0;
+        $c['exclude_sale'] = !empty($c['exclude_sale']) ? 1 : 0;
+        $c['require_choice'] = !empty($c['require_choice']) ? 1 : 0;
+        $c['auto_gift'] = !empty($c['auto_gift']) ? 1 : 0;
+        $c['priority'] = intval($c['priority']);
+        $c['min_qty'] = max(1, intval($c['min_qty']));
+        $c['gifts_to_choose'] = max(1, intval($c['gifts_to_choose']));
+        $c['max_gifts_per_order'] = max(1, intval($c['max_gifts_per_order']));
+        $c['max_per_customer'] = max(0, intval($c['max_per_customer']));
+        $c['min_subtotal'] = max(0, floatval($c['min_subtotal']));
+        return $c;
+    }
+
+    public static function render_admin_page() {
+        if (!current_user_can('manage_woocommerce')) return;
+        $campaigns = self::get_campaigns();
+        ?>
+        <div class="wrap">
+            <h1>Gratis gave-kampanjer</h1>
+            <p>Opprett eller rediger kampanjer. Høyere prioritet vinner ved overlapp.</p>
+
+            <form method="post">
+                <?php wp_nonce_field(self::NONCE_ACTION, 'ggw_nonce'); ?>
+                <input type="hidden" name="ggw_action" value="save_campaign">
+
+                <table class="form-table">
+                    <tr><th>Tittel</th><td><input type="text" name="title" class="regular-text" required></td></tr>
+                    <tr><th>Aktiv</th><td><label><input type="checkbox" name="active" value="1" checked> Aktiv kampanje</label></td></tr>
+                    <tr><th>Prioritet</th><td><input type="number" name="priority" value="10"></td></tr>
+                    <tr><th>Startdato</th><td><input type="datetime-local" name="start"></td></tr>
+                    <tr><th>Sluttdato</th><td><input type="datetime-local" name="end"></td></tr>
+
+                    <tr><th>Trigger produkter (parent IDer)</th><td><input type="text" name="trigger_products_csv" class="regular-text" placeholder="12,34,56"></td></tr>
+                    <tr><th>Trigger kategorier (term IDer)</th><td><input type="text" name="trigger_categories_csv" class="regular-text" placeholder="3,8"></td></tr>
+                    <tr><th>Trigger tags (term IDer)</th><td><input type="text" name="trigger_tags_csv" class="regular-text" placeholder="2,5"></td></tr>
+
+                    <tr><th>Minimum antall trigger</th><td><input type="number" name="min_qty" value="1" min="1"></td></tr>
+                    <tr><th>Minimum ordrebeløp</th><td><input type="number" name="min_subtotal" value="0" min="0" step="0.01"></td></tr>
+                    <tr><th>Ekskluder salgsvarer</th><td><label><input type="checkbox" name="exclude_sale" value="1"> Gjelder ikke salgsvarer</label></td></tr>
+
+                    <tr><th>Gaveprodukter (IDer)</th><td><input type="text" name="gift_products_csv" class="regular-text" required placeholder="90,91,92"></td></tr>
+                    <tr><th>Kunden kan velge</th><td><input type="number" name="gifts_to_choose" value="1" min="1"> gave(r)</td></tr>
+                    <tr><th>Maks gaver per ordre</th><td><input type="number" name="max_gifts_per_order" value="1" min="1"></td></tr>
+                    <tr><th>Maks per kunde (0=ingen grense)</th><td><input type="number" name="max_per_customer" value="0" min="0"></td></tr>
+                    <tr><th>Krever gavevalg</th><td><label><input type="checkbox" name="require_choice" value="1" checked> Må velge gave før kjøp</label></td></tr>
+                    <tr><th>Auto-gave</th><td><label><input type="checkbox" name="auto_gift" value="1"> Legg til første tilgjengelige gave automatisk</label></td></tr>
+
+                    <tr><th>Kort overskrift</th><td><input type="text" name="headline" class="regular-text" value="Gratis gave tilgjengelig"></td></tr>
+                    <tr><th>Beskrivelse/kravtekst</th><td><textarea name="description" rows="3" class="large-text"></textarea></td></tr>
+                    <tr><th>Badge tekst</th><td><input type="text" name="badge" class="regular-text" value="Gratis gave"></td></tr>
+                    <tr><th>CTA tekst</th><td><input type="text" name="cta" class="regular-text" value="Velg gave"></td></tr>
+                </table>
+
+                <?php submit_button('Lagre kampanje'); ?>
+            </form>
+
+            <hr>
+            <h2>Eksisterende kampanjer</h2>
+            <?php if (empty($campaigns)): ?>
+                <p>Ingen kampanjer ennå.</p>
+            <?php else: ?>
+                <table class="widefat striped">
+                    <thead><tr>
+                        <th>Tittel</th><th>ID</th><th>Aktiv</th><th>Prioritet</th><th>Periode</th><th>Trigger produkter</th><th>Gaver</th><th>Handling</th>
+                    </tr></thead>
+                    <tbody>
+                    <?php foreach ($campaigns as $c): ?>
+                        <tr>
+                            <td><?php echo esc_html($c['title']); ?></td>
+                            <td><code><?php echo esc_html($c['id']); ?></code></td>
+                            <td><?php echo $c['active'] ? 'Ja' : 'Nei'; ?></td>
+                            <td><?php echo intval($c['priority']); ?></td>
+                            <td><?php echo esc_html(($c['start'] ?: '-') . ' → ' . ($c['end'] ?: '-')); ?></td>
+                            <td><?php echo esc_html(implode(',', $c['trigger_products'])); ?></td>
+                            <td><?php echo esc_html(implode(',', $c['gift_products'])); ?></td>
+                            <td>
+                                <form method="post" style="display:inline">
+                                    <?php wp_nonce_field(self::NONCE_ACTION, 'ggw_nonce'); ?>
+                                    <input type="hidden" name="ggw_action" value="delete_campaign">
+                                    <input type="hidden" name="id" value="<?php echo esc_attr($c['id']); ?>">
+                                    <button class="button button-link-delete" onclick="return confirm('Slette kampanje?')">Slett</button>
+                                </form>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+            <?php endif; ?>
+        </div>
+        <?php
+    }
+
+    public static function handle_admin_post() {
+        if (!is_admin() || !current_user_can('manage_woocommerce')) return;
+        if (empty($_POST['ggw_action'])) return;
+        if (empty($_POST['ggw_nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['ggw_nonce'])), self::NONCE_ACTION)) return;
+
+        $action = sanitize_text_field(wp_unslash($_POST['ggw_action']));
+        $campaigns = self::get_campaigns();
+
+        if ($action === 'save_campaign') {
+            $new = self::normalize_campaign([
+                'id' => wp_generate_uuid4(),
+                'title' => sanitize_text_field(wp_unslash($_POST['title'] ?? '')),
+                'active' => !empty($_POST['active']),
+                'priority' => intval($_POST['priority'] ?? 10),
+                'start' => sanitize_text_field(wp_unslash($_POST['start'] ?? '')),
+                'end' => sanitize_text_field(wp_unslash($_POST['end'] ?? '')),
+                'trigger_products' => self::csv_to_ids($_POST['trigger_products_csv'] ?? ''),
+                'trigger_categories' => self::csv_to_ids($_POST['trigger_categories_csv'] ?? ''),
+                'trigger_tags' => self::csv_to_ids($_POST['trigger_tags_csv'] ?? ''),
+                'min_qty' => intval($_POST['min_qty'] ?? 1),
+                'min_subtotal' => floatval($_POST['min_subtotal'] ?? 0),
+                'exclude_sale' => !empty($_POST['exclude_sale']),
+                'gift_products' => self::csv_to_ids($_POST['gift_products_csv'] ?? ''),
+                'gifts_to_choose' => intval($_POST['gifts_to_choose'] ?? 1),
+                'max_gifts_per_order' => intval($_POST['max_gifts_per_order'] ?? 1),
+                'max_per_customer' => intval($_POST['max_per_customer'] ?? 0),
+                'require_choice' => !empty($_POST['require_choice']),
+                'auto_gift' => !empty($_POST['auto_gift']),
+                'headline' => sanitize_text_field(wp_unslash($_POST['headline'] ?? '')),
+                'description' => sanitize_textarea_field(wp_unslash($_POST['description'] ?? '')),
+                'badge' => sanitize_text_field(wp_unslash($_POST['badge'] ?? '')),
+                'cta' => sanitize_text_field(wp_unslash($_POST['cta'] ?? '')),
+            ]);
+
+            if (empty($new['title']) || empty($new['gift_products'])) {
+                add_action('admin_notices', function(){ echo '<div class="notice notice-error"><p>Tittel og gaveprodukter er påkrevd.</p></div>'; });
+                return;
+            }
+
+            $campaigns[] = $new;
+            update_option(self::OPT_KEY, $campaigns, false);
+            self::soft_invalidate_cache();
+            wp_safe_redirect(admin_url('admin.php?page=ggw-free-gifts'));
+            exit;
+        }
+
+        if ($action === 'delete_campaign') {
+            $id = sanitize_text_field(wp_unslash($_POST['id'] ?? ''));
+            $campaigns = array_values(array_filter($campaigns, function($c) use ($id){
+                return $c['id'] !== $id;
+            }));
+            update_option(self::OPT_KEY, $campaigns, false);
+            self::soft_invalidate_cache();
+            wp_safe_redirect(admin_url('admin.php?page=ggw-free-gifts'));
+            exit;
+        }
+    }
+
+    private static function csv_to_ids($csv) {
+        if (is_array($csv)) $csv = implode(',', $csv);
+        $csv = sanitize_text_field(wp_unslash($csv));
+        $parts = preg_split('/[,\s]+/', $csv);
+        return array_values(array_filter(array_map('absint', (array)$parts)));
+    }
+
+    /* =========================
+     * CAMPAIGN MATCHING
+     * ========================= */
+    private static function now_ts() {
+        return current_time('timestamp');
+    }
+
+    private static function parse_admin_dt($str) {
+        if (!$str) return 0;
+        $ts = strtotime($str);
+        return $ts ? $ts : 0;
+    }
+
+    private static function campaign_active_now($c) {
+        if (empty($c['active'])) return false;
+        $now = self::now_ts();
+        $start = self::parse_admin_dt($c['start']);
+        $end   = self::parse_admin_dt($c['end']);
+        if ($start && $now < $start) return false;
+        if ($end && $now > $end) return false;
+        return true;
+    }
+
+    private static function product_parent_id($product_id) {
+        $p = wc_get_product($product_id);
+        if (!$p) return 0;
+        if ($p->is_type('variation')) return $p->get_parent_id();
+        return $p->get_id();
+    }
+
+    private static function product_match_trigger($product_id, $campaign) {
+        $parent_id = self::product_parent_id($product_id);
+        if (!$parent_id) return false;
+
+        // Product IDs
+        if (!empty($campaign['trigger_products']) && in_array($parent_id, $campaign['trigger_products'], true)) return true;
+
+        // Categories
+        if (!empty($campaign['trigger_categories'])) {
+            $terms = wc_get_product_term_ids($parent_id, 'product_cat');
+            if (array_intersect($terms, $campaign['trigger_categories'])) return true;
+        }
+
+        // Tags
+        if (!empty($campaign['trigger_tags'])) {
+            $terms = wc_get_product_term_ids($parent_id, 'product_tag');
+            if (array_intersect($terms, $campaign['trigger_tags'])) return true;
+        }
+
+        return false;
+    }
+
+    public static function get_best_campaign_for_product($product_id) {
+        $product_id = absint($product_id);
+        if (!$product_id) return null;
+
+        $cache_key = self::TRANSIENT_CAMPAIGN_BY_PRODUCT . $product_id;
+        $cached = get_transient($cache_key);
+        if ($cached !== false) return $cached ?: null;
+
+        $match = null;
+        $campaigns = self::get_campaigns();
+        foreach ($campaigns as $c) {
+            if (!self::campaign_active_now($c)) continue;
+            if (self::product_match_trigger($product_id, $c)) {
+                $match = $c;
+                break; // already sorted by priority
+            }
+        }
+
+        set_transient($cache_key, $match ?: 0, MINUTE_IN_SECONDS * 10);
+        return $match;
+    }
+
+    private static function gift_product_is_available($gift_product_id) {
+        $p = wc_get_product($gift_product_id);
+        if (!$p || !$p->is_purchasable()) return false;
+        if (!$p->is_in_stock()) return false;
+        return true;
+    }
+
+    private static function first_available_gift($campaign) {
+        foreach ($campaign['gift_products'] as $gid) {
+            if (self::gift_product_is_available($gid)) return $gid;
+        }
+        return 0;
+    }
+
+    /* =========================
+     * PRODUCT PAGE UI
+     * ========================= */
+    public static function render_product_gift_ui() {
+        global $product;
+        if (!$product) return;
+
+        $campaign = self::get_best_campaign_for_product($product->get_id());
+        if (!$campaign) return;
+
+        $gift_ids = array_values(array_filter($campaign['gift_products'], [__CLASS__, 'gift_product_is_available']));
+        if (empty($gift_ids)) return;
+
+        echo '<div class="ggw-box" style="margin:14px 0;padding:12px;border:1px solid #e5e7eb;border-radius:8px;background:#fafafa">';
+        if (!empty($campaign['badge'])) {
+            echo '<div style="display:inline-block;font-size:12px;font-weight:600;padding:3px 8px;border-radius:999px;background:#111;color:#fff;margin-bottom:8px;">' . esc_html($campaign['badge']) . '</div>';
+        }
+        echo '<div style="font-weight:600;margin-bottom:4px;">' . esc_html($campaign['headline']) . '</div>';
+        if (!empty($campaign['description'])) {
+            echo '<div style="font-size:13px;color:#4b5563;margin-bottom:8px;">' . esc_html($campaign['description']) . '</div>';
+        }
+
+        // If require choice, render dropdown
+        if (!empty($campaign['require_choice']) && empty($campaign['auto_gift'])) {
+            echo '<label for="ggw_gift_product" style="display:block;font-size:13px;margin-bottom:4px;">' . esc_html($campaign['cta']) . '</label>';
+            echo '<select id="ggw_gift_product" name="ggw_gift_product" style="width:100%;max-width:360px;">';
+            echo '<option value="">Velg gave</option>';
+            foreach ($gift_ids as $gid) {
+                $gp = wc_get_product($gid);
+                if (!$gp) continue;
+                echo '<option value="' . esc_attr($gid) . '">' . esc_html($gp->get_name()) . '</option>';
+            }
+            echo '</select>';
+
+            echo '<input type="hidden" name="ggw_campaign_id" value="' . esc_attr($campaign['id']) . '">';
+            echo '<p style="font-size:12px;color:#6b7280;margin-top:6px;">Gaven valideres i handlekurv/checkout.</p>';
+        } else {
+            echo '<p style="font-size:13px;margin:0;">Gratis gave legges automatisk til i handlekurv.</p>';
+            echo '<input type="hidden" name="ggw_campaign_id" value="' . esc_attr($campaign['id']) . '">';
+        }
+
+        echo '</div>';
+    }
+
+    public static function validate_add_to_cart($passed, $product_id, $quantity, $variation_id = 0, $variations = []) {
+        if (!$passed) return false;
+        $target_id = $variation_id ? $variation_id : $product_id;
+        $campaign = self::get_best_campaign_for_product($target_id);
+        if (!$campaign) return $passed;
+
+        // Sale exclusion
+        if (!empty($campaign['exclude_sale'])) {
+            $p = wc_get_product($target_id);
+            if ($p && $p->is_on_sale()) {
+                wc_add_notice(__('Dette produktet kvalifiserer ikke til gavekampanje (salgsvare).', 'ggw'), 'error');
+                return false;
+            }
+        }
+
+        // Required choice validation
+        if (!empty($campaign['require_choice']) && empty($campaign['auto_gift'])) {
+            $gift_id = absint($_POST['ggw_gift_product'] ?? 0);
+            if (!$gift_id) {
+                wc_add_notice(__('Velg en gratis gave før du legger i handlekurven.', 'ggw'), 'error');
+                return false;
+            }
+            if (!in_array($gift_id, $campaign['gift_products'], true) || !self::gift_product_is_available($gift_id)) {
+                wc_add_notice(__('Valgt gave er ikke tilgjengelig. Velg en annen gave.', 'ggw'), 'error');
+                return false;
+            }
+        }
+
+        return $passed;
+    }
+
+    public static function capture_add_cart_data($cart_item_data, $product_id, $variation_id, $quantity) {
+        $target_id = $variation_id ? $variation_id : $product_id;
+        $campaign = self::get_best_campaign_for_product($target_id);
+        if (!$campaign) return $cart_item_data;
+
+        $cart_item_data['_ggw_campaign_id'] = $campaign['id'];
+        $cart_item_data['_ggw_trigger_parent'] = self::product_parent_id($target_id);
+
+        $selected_gift = absint($_POST['ggw_gift_product'] ?? 0);
+        if ($selected_gift && in_array($selected_gift, $campaign['gift_products'], true)) {
+            $cart_item_data['_ggw_selected_gift'] = $selected_gift;
+        }
+        return $cart_item_data;
+    }
+
+    /* =========================
+     * CART SYNC
+     * ========================= */
+    private static $session_loaded = false;
+    public static function mark_session_loaded() { self::$session_loaded = true; }
+
+    private static function customer_used_count_for_campaign($campaign_id) {
+        if (!is_user_logged_in()) return 0;
+        $uid = get_current_user_id();
+        $cache_key = 'ggw_used_' . $uid . '_' . md5($campaign_id);
+        $cached = get_transient($cache_key);
+        if ($cached !== false) return intval($cached);
+
+        $orders = wc_get_orders([
+            'customer_id' => $uid,
+            'limit' => 50,
+            'status' => ['wc-processing', 'wc-completed', 'wc-on-hold'],
+            'return' => 'objects',
+        ]);
+        $count = 0;
+        foreach ($orders as $o) {
+            foreach ($o->get_items() as $it) {
+                if ($it->get_meta('_ggw_campaign_id') === $campaign_id && $it->get_meta('_ggw_is_gift') === '1') {
+                    $count += max(1, intval($it->get_quantity()));
+                }
+            }
+        }
+        set_transient($cache_key, $count, HOUR_IN_SECONDS);
+        return $count;
+    }
+
+    public static function sync_cart_gifts($cart) {
+        if (is_admin() && !defined('DOING_AJAX')) return;
+        if (!$cart || $cart->is_empty()) return;
+
+        // Prevent infinite loops
+        static $running = false;
+        if ($running) return;
+        $running = true;
+
+        $campaigns = self::get_campaigns();
+        $campaign_index = [];
+        foreach ($campaigns as $c) $campaign_index[$c['id']] = $c;
+
+        $triggers = []; // campaign_id => info
+        $gift_lines = []; // cart_item_key => item
+
+        foreach ($cart->get_cart() as $key => $item) {
+            if (!empty($item['_ggw_is_gift'])) {
+                $gift_lines[$key] = $item;
+                continue;
+            }
+
+            $pid = !empty($item['variation_id']) ? $item['variation_id'] : $item['product_id'];
+            $campaign = self::get_best_campaign_for_product($pid);
+            if (!$campaign) continue;
+            if (empty($campaign_index[$campaign['id']])) continue;
+
+            if (!isset($triggers[$campaign['id']])) {
+                $triggers[$campaign['id']] = [
+                    'campaign' => $campaign,
+                    'qty' => 0,
+                    'subtotal' => 0.0,
+                    'selected_gifts' => [],
+                    'trigger_keys' => [],
+                ];
+            }
+
+            $qty = intval($item['quantity']);
+            $line_subtotal = isset($item['line_subtotal']) ? floatval($item['line_subtotal']) : 0.0;
+            $triggers[$campaign['id']]['qty'] += $qty;
+            $triggers[$campaign['id']]['subtotal'] += $line_subtotal;
+            $triggers[$campaign['id']]['trigger_keys'][] = $key;
+
+            if (!empty($item['_ggw_selected_gift'])) {
+                $triggers[$campaign['id']]['selected_gifts'][] = absint($item['_ggw_selected_gift']);
+            }
+        }
+
+        // Evaluate entitlement and ensure gift lines
+        foreach ($triggers as $cid => $info) {
+            $c = $info['campaign'];
+
+            if (!self::campaign_active_now($c)) continue;
+            if ($info['qty'] < intval($c['min_qty'])) continue;
+            if ($info['subtotal'] < floatval($c['min_subtotal'])) continue;
+
+            if ($c['max_per_customer'] > 0) {
+                $used = self::customer_used_count_for_campaign($cid);
+                if ($used >= intval($c['max_per_customer'])) continue;
+            }
+
+            $entitled = min(intval($c['max_gifts_per_order']), intval($c['gifts_to_choose']));
+            if ($entitled < 1) continue;
+
+            $selected = array_values(array_filter(array_unique(array_map('absint', $info['selected_gifts']))));
+
+            // auto-gift if needed
+            if (empty($selected) && !empty($c['auto_gift'])) {
+                $first = self::first_available_gift($c);
+                if ($first) $selected[] = $first;
+            }
+
+            // If still empty and required choice => wait for fallback in checkout/cart notice
+            if (empty($selected)) continue;
+
+            $selected = array_slice($selected, 0, $entitled);
+
+            foreach ($selected as $gift_id) {
+                if (!in_array($gift_id, $c['gift_products'], true)) continue;
+                if (!self::gift_product_is_available($gift_id)) continue;
+
+                // Check if gift already exists for campaign + gift product
+                $exists_key = null;
+                foreach ($gift_lines as $gk => $gitem) {
+                    if (($gitem['_ggw_campaign_id'] ?? '') === $cid && intval($gitem['product_id']) === intval($gift_id)) {
+                        $exists_key = $gk; break;
+                    }
+                }
+
+                if ($exists_key) {
+                    // enforce price 0 and qty 1
+                    $gift_product = $cart->cart_contents[$exists_key]['data'];
+                    if ($gift_product) $gift_product->set_price(0);
+                    $cart->set_quantity($exists_key, 1, false);
+                } else {
+                    $trigger_ref = reset($info['trigger_keys']);
+                    $add_data = [
+                        '_ggw_is_gift' => 1,
+                        '_ggw_campaign_id' => $cid,
+                        '_ggw_trigger_key' => $trigger_ref ?: '',
+                        '_ggw_label' => 'Gratis gave',
+                    ];
+                    $new_key = $cart->add_to_cart($gift_id, 1, 0, [], $add_data);
+                    if ($new_key && isset($cart->cart_contents[$new_key]['data'])) {
+                        $cart->cart_contents[$new_key]['data']->set_price(0);
+                    }
+                }
+            }
+        }
+
+        // Remove orphan gifts / invalid gifts
+        foreach ($gift_lines as $gk => $gitem) {
+            $cid = $gitem['_ggw_campaign_id'] ?? '';
+            $gift_pid = intval($gitem['product_id'] ?? 0);
+            $valid = false;
+
+            if ($cid && isset($triggers[$cid])) {
+                $c = $triggers[$cid]['campaign'];
+                if (self::campaign_active_now($c) && in_array($gift_pid, $c['gift_products'], true) && self::gift_product_is_available($gift_pid)) {
+                    $valid = true;
+                }
+            }
+
+            if (!$valid) {
+                $cart->remove_cart_item($gk);
+            } else {
+                if (isset($cart->cart_contents[$gk]['data'])) {
+                    $cart->cart_contents[$gk]['data']->set_price(0);
+                }
+                $cart->set_quantity($gk, 1, false);
+            }
+        }
+
+        $running = false;
+    }
+
+    public static function cleanup_removed_trigger($cart_item_key, $cart) {
+        // Safety cleanup done in sync_cart_gifts, this hook kept intentionally light.
+    }
+
+    public static function label_gift_cart_item($name, $cart_item, $cart_item_key) {
+        if (!empty($cart_item['_ggw_is_gift'])) {
+            $name .= ' <small style="display:block;color:#16a34a;font-weight:600;">Gratis gave</small>';
+        }
+        return $name;
+    }
+
+    public static function display_cart_item_meta($item_data, $cart_item) {
+        if (!empty($cart_item['_ggw_is_gift'])) {
+            $item_data[] = [
+                'key' => 'Kampanje',
+                'value' => sanitize_text_field($cart_item['_ggw_campaign_id'] ?? ''),
+            ];
+        }
+        return $item_data;
+    }
+
+    /* =========================
+     * CHECKOUT FALLBACK
+     * ========================= */
+    private static function campaigns_missing_gift_in_cart() {
+        $cart = WC()->cart;
+        if (!$cart || $cart->is_empty()) return [];
+
+        $missing = [];
+        $triggers_by_campaign = [];
+        $gift_by_campaign = [];
+
+        foreach ($cart->get_cart() as $item) {
+            if (!empty($item['_ggw_is_gift'])) {
+                $cid = $item['_ggw_campaign_id'] ?? '';
+                if ($cid) $gift_by_campaign[$cid] = true;
+                continue;
+            }
+
+            $pid = !empty($item['variation_id']) ? $item['variation_id'] : $item['product_id'];
+            $c = self::get_best_campaign_for_product($pid);
+            if (!$c) continue;
+            if (!self::campaign_active_now($c)) continue;
+
+            if (!isset($triggers_by_campaign[$c['id']])) {
+                $triggers_by_campaign[$c['id']] = ['campaign' => $c, 'qty' => 0, 'subtotal' => 0.0];
+            }
+
+            $triggers_by_campaign[$c['id']]['qty'] += intval($item['quantity']);
+            $triggers_by_campaign[$c['id']]['subtotal'] += floatval($item['line_subtotal'] ?? 0);
+        }
+
+        foreach ($triggers_by_campaign as $cid => $row) {
+            $c = $row['campaign'];
+            if ($row['qty'] < intval($c['min_qty'])) continue;
+            if ($row['subtotal'] < floatval($c['min_subtotal'])) continue;
+            if (empty($c['require_choice']) || !empty($c['auto_gift'])) continue;
+            if (!empty($gift_by_campaign[$cid])) continue;
+
+            $gifts = array_values(array_filter($c['gift_products'], [__CLASS__, 'gift_product_is_available']));
+            if (empty($gifts)) continue;
+
+            $missing[$cid] = ['campaign' => $c, 'gifts' => $gifts];
+        }
+
+        return $missing;
+    }
+
+    public static function render_checkout_fallback() {
+        if (!is_checkout()) return;
+        $missing = self::campaigns_missing_gift_in_cart();
+        if (empty($missing)) return;
+
+        echo '<div class="ggw-checkout-fallback" style="margin:16px 0;padding:12px;border:1px solid #e5e7eb;border-radius:8px;">';
+        echo '<h3 style="margin-top:0">Velg din gratis gave</h3>';
+        foreach ($missing as $cid => $row) {
+            $c = $row['campaign'];
+            echo '<p style="margin:8px 0 4px;"><strong>' . esc_html($c['title']) . '</strong></p>';
+            foreach ($row['gifts'] as $gid) {
+                $gp = wc_get_product($gid);
+                if (!$gp) continue;
+                echo '<label style="display:block;margin:4px 0">';
+                echo '<input type="radio" name="ggw_checkout_gift[' . esc_attr($cid) . ']" value="' . esc_attr($gid) . '"> ';
+                echo esc_html($gp->get_name());
+                echo '</label>';
+            }
+        }
+        echo '</div>';
+    }
+
+    public static function checkout_validate_fallback_choice() {
+        $missing = self::campaigns_missing_gift_in_cart();
+        if (empty($missing)) return;
+
+        $posted = $_POST['ggw_checkout_gift'] ?? [];
+        if (!is_array($posted)) $posted = [];
+
+        foreach ($missing as $cid => $row) {
+            $gift = absint($posted[$cid] ?? 0);
+            if (!$gift) {
+                wc_add_notice(__('Velg gratis gave før betaling.', 'ggw'), 'error');
+                continue;
+            }
+            if (!in_array($gift, $row['gifts'], true)) {
+                wc_add_notice(__('Valgt gave er ikke gyldig. Velg på nytt.', 'ggw'), 'error');
+            }
+        }
+    }
+
+    public static function checkout_apply_fallback_choice($order_id) {
+        // Legger valgt gave i cart før ordre vanligvis er best praksis,
+        // men i checkout fallback gjør vi minimumsvariant:
+        // valget lagres på ordrenotat for sporbarhet hvis gave manglet i cart.
+        $posted = $_POST['ggw_checkout_gift'] ?? [];
+        if (!is_array($posted) || empty($posted)) return;
+
+        $human = [];
+        foreach ($posted as $cid => $gid) {
+            $cid = sanitize_text_field($cid);
+            $gid = absint($gid);
+            if (!$cid || !$gid) continue;
+            $p = wc_get_product($gid);
+            $human[] = $cid . ': ' . ($p ? $p->get_name() : $gid);
+        }
+        if (!empty($human)) {
+            update_post_meta($order_id, '_ggw_checkout_selected_gifts', $posted);
+            $order = wc_get_order($order_id);
+            if ($order) $order->add_order_note('Gratis gave valgt i checkout fallback: ' . implode(' | ', $human));
+        }
+    }
+
+    /* =========================
+     * ORDER META
+     * ========================= */
+    public static function add_order_line_meta($item, $cart_item_key, $values, $order) {
+        if (!empty($values['_ggw_is_gift'])) {
+            $item->add_meta_data('_ggw_is_gift', '1', true);
+            $item->add_meta_data('_ggw_campaign_id', sanitize_text_field($values['_ggw_campaign_id'] ?? ''), true);
+            $item->add_meta_data('_ggw_trigger_key', sanitize_text_field($values['_ggw_trigger_key'] ?? ''), true);
+            $item->add_meta_data('Merking', 'Gratis gave', true);
+        } else if (!empty($values['_ggw_campaign_id'])) {
+            $item->add_meta_data('_ggw_trigger_campaign', sanitize_text_field($values['_ggw_campaign_id']), true);
+            $item->add_meta_data('_ggw_trigger_parent', absint($values['_ggw_trigger_parent'] ?? 0), true);
+        }
+    }
+
+    /* =========================
+     * CACHE INVALIDATION
+     * ========================= */
+    public static function soft_invalidate_cache() {
+        update_option('ggw_campaigns_last_changed', time(), false);
+        // Vi unngår tung sletting av alle transients; de utløper raskt (10 min).
+    }
+}
+
+GGW_Free_Gift_Campaigns::init();
 
