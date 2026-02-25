@@ -46,6 +46,7 @@ final class GGW_Free_Gift_Campaigns {
         add_filter('woocommerce_cart_shipping_packages', [__CLASS__, 'filter_shipping_packages'], 20);
         add_filter('woocommerce_shipping_free_shipping_is_available', [__CLASS__, 'filter_free_shipping_availability'], 20, 3);
         add_filter('woocommerce_coupon_is_valid_for_product', [__CLASS__, 'exclude_gifts_from_coupon_product_validation'], 20, 4);
+        add_action('woocommerce_before_cart', [__CLASS__, 'render_cart_status_line'], 5);
 
         // Checkout fallback (støttes kun i klassisk checkout)
         self::register_checkout_fallback_hooks();
@@ -915,31 +916,123 @@ final class GGW_Free_Gift_Campaigns {
         $qty = max(0, intval($qty));
         $subtotal = max(0.0, floatval($subtotal));
 
+        $missing_qty = max(0, intval($campaign['min_qty']) - $qty);
+        $missing_subtotal = max(0.0, floatval($campaign['min_subtotal']) - $subtotal);
+
         if (!self::campaign_active_now($campaign)) {
-            return ['qualifies' => false, 'entitled_total' => 0];
+            return ['qualifies' => false, 'entitled_total' => 0, 'missing_qty' => $missing_qty, 'missing_subtotal' => $missing_subtotal, 'blocked' => true];
         }
 
         if ($qty < intval($campaign['min_qty'])) {
-            return ['qualifies' => false, 'entitled_total' => 0];
+            return ['qualifies' => false, 'entitled_total' => 0, 'missing_qty' => $missing_qty, 'missing_subtotal' => $missing_subtotal, 'blocked' => false];
         }
 
         if ($subtotal < floatval($campaign['min_subtotal'])) {
-            return ['qualifies' => false, 'entitled_total' => 0];
+            return ['qualifies' => false, 'entitled_total' => 0, 'missing_qty' => $missing_qty, 'missing_subtotal' => $missing_subtotal, 'blocked' => false];
         }
 
         if (!empty($campaign['max_per_customer']) && $campaign_id !== '') {
             $used = self::customer_used_count_for_campaign($campaign_id);
             if ($used >= intval($campaign['max_per_customer'])) {
-                return ['qualifies' => false, 'entitled_total' => 0];
+                return ['qualifies' => false, 'entitled_total' => 0, 'missing_qty' => 0, 'missing_subtotal' => 0.0, 'blocked' => true];
             }
         }
 
         $entitled_total = self::campaign_entitled_total($campaign, $qty);
         if ($entitled_total < 1) {
-            return ['qualifies' => false, 'entitled_total' => 0];
+            return ['qualifies' => false, 'entitled_total' => 0, 'missing_qty' => 0, 'missing_subtotal' => 0.0, 'blocked' => true];
         }
 
-        return ['qualifies' => true, 'entitled_total' => $entitled_total];
+        return ['qualifies' => true, 'entitled_total' => $entitled_total, 'missing_qty' => 0, 'missing_subtotal' => 0.0, 'blocked' => false];
+    }
+
+    private static function get_cart_campaign_status_rows() {
+        $cart = WC()->cart;
+        if (!$cart || $cart->is_empty()) return [];
+
+        $rows = [];
+        foreach ($cart->get_cart() as $item) {
+            if (self::cart_item_is_gift($item)) continue;
+
+            $pid = !empty($item['variation_id']) ? $item['variation_id'] : $item['product_id'];
+            $campaign = self::get_best_campaign_for_product($pid);
+            if (!$campaign) continue;
+
+            if (!self::cart_item_counts_for_campaign_trigger($item, $campaign)) continue;
+
+            $cid = $campaign['id'];
+            if (!isset($rows[$cid])) {
+                $rows[$cid] = [
+                    'campaign' => $campaign,
+                    'qty' => 0,
+                    'subtotal' => 0.0,
+                ];
+            }
+
+            $rows[$cid]['qty'] += intval($item['quantity'] ?? 0);
+            $rows[$cid]['subtotal'] += floatval($item['line_subtotal'] ?? 0);
+        }
+
+        if (empty($rows)) return [];
+
+        foreach ($rows as $cid => $row) {
+            $rows[$cid]['trigger_state'] = self::evaluate_campaign_trigger_state($row['campaign'], $row['qty'], $row['subtotal'], $cid);
+        }
+
+        usort($rows, function($a, $b) {
+            return intval($b['campaign']['priority']) <=> intval($a['campaign']['priority']);
+        });
+
+        return $rows;
+    }
+
+    public static function render_cart_status_line() {
+        if (!function_exists('is_cart') || !is_cart()) return;
+
+        $rows = self::get_cart_campaign_status_rows();
+        if (empty($rows)) return;
+
+        $selected = null;
+        foreach ($rows as $row) {
+            if (empty($row['trigger_state']['blocked'])) {
+                $selected = $row;
+                break;
+            }
+        }
+        if (!$selected) return;
+
+        $trigger_state = $selected['trigger_state'];
+        $campaign_title = sanitize_text_field($selected['campaign']['title'] ?? '');
+
+        $message = '';
+        $style = 'background:#f9fafb;border:1px solid #e5e7eb;color:#1f2937;';
+        if (!empty($trigger_state['qualifies'])) {
+            $message = '✅ Gratis gave er aktiv' . ($campaign_title ? ': ' . $campaign_title : '') . '.';
+            $style = 'background:#f0fdf4;border:1px solid #86efac;color:#166534;';
+        } else {
+            $steps = [];
+            $missing_qty = max(0, intval($trigger_state['missing_qty'] ?? 0));
+            $missing_subtotal = max(0.0, floatval($trigger_state['missing_subtotal'] ?? 0.0));
+
+            if ($missing_qty > 0) {
+                $steps[] = 'legg til ' . $missing_qty . ' kvalifiserende vare' . ($missing_qty > 1 ? 'r' : '');
+            }
+
+            if ($missing_subtotal > 0.0) {
+                $remaining_amount = wp_strip_all_tags(wc_price($missing_subtotal));
+                $steps[] = 'mangler ' . $remaining_amount;
+            }
+
+            if (!empty($steps)) {
+                $message = 'For gratis gave: ' . implode(' og ', $steps) . '.';
+            }
+        }
+
+        if ($message === '') return;
+
+        echo '<div class="ggw-cart-status-line" style="margin:0 0 16px;padding:10px 12px;border-radius:8px;font-size:14px;font-weight:600;' . esc_attr($style) . '">';
+        echo esc_html($message);
+        echo '</div>';
     }
 
     public static function sync_cart_gifts($cart) {
