@@ -728,8 +728,12 @@ final class GGW_Free_Gift_Campaigns {
     public static function maybe_handle_swap_gift_action() {
         if (empty($_GET['ggw_action']) || sanitize_text_field(wp_unslash($_GET['ggw_action'])) !== 'swap_gift') return;
 
+        if (!function_exists('WC') || !WC() || !isset(WC()->cart)) {
+            return;
+        }
+
         $cart = WC()->cart;
-        if (!$cart || $cart->is_empty()) return;
+        if (!$cart || $cart->is_empty() || !method_exists($cart, 'add_to_cart')) return;
 
         $gift_key = sanitize_text_field(wp_unslash($_GET['ggw_gift_key'] ?? ''));
         $nonce = sanitize_text_field(wp_unslash($_GET['_wpnonce'] ?? ''));
@@ -1542,11 +1546,9 @@ final class GGW_Free_Gift_Campaigns {
 
     public static function display_cart_item_meta($item_data, $cart_item) {
         if (self::cart_item_is_gift($cart_item)) {
-            $item_data[] = [
-                'key' => 'Kampanje',
-                'value' => sanitize_text_field($cart_item['_ggw_campaign_id'] ?? ''),
-            ];
+            return $item_data;
         }
+
         return $item_data;
     }
 
