@@ -127,6 +127,18 @@ final class GGW_Free_Gift_Campaigns {
     public static function render_admin_page() {
         if (!current_user_can('manage_woocommerce')) return;
         $campaigns = self::get_campaigns();
+        $edit_id = sanitize_text_field(wp_unslash($_GET['edit_campaign'] ?? ''));
+        $editing = self::normalize_campaign([]);
+
+        if ($edit_id) {
+            foreach ($campaigns as $campaign) {
+                if ($campaign['id'] === $edit_id) {
+                    $editing = $campaign;
+                    break;
+                }
+            }
+        }
+
         ?>
         <div class="wrap">
             <h1>Gratis gave-kampanjer</h1>
@@ -135,36 +147,40 @@ final class GGW_Free_Gift_Campaigns {
             <form method="post">
                 <?php wp_nonce_field(self::NONCE_ACTION, 'ggw_nonce'); ?>
                 <input type="hidden" name="ggw_action" value="save_campaign">
+                <input type="hidden" name="campaign_id" value="<?php echo esc_attr($editing['id']); ?>">
 
                 <table class="form-table">
-                    <tr><th>Tittel</th><td><input type="text" name="title" class="regular-text" required></td></tr>
-                    <tr><th>Aktiv</th><td><label><input type="checkbox" name="active" value="1" checked> Aktiv kampanje</label></td></tr>
-                    <tr><th>Prioritet</th><td><input type="number" name="priority" value="10"></td></tr>
-                    <tr><th>Startdato</th><td><input type="datetime-local" name="start"></td></tr>
-                    <tr><th>Sluttdato</th><td><input type="datetime-local" name="end"></td></tr>
+                    <tr><th>Tittel</th><td><input type="text" name="title" class="regular-text" value="<?php echo esc_attr($editing['title']); ?>" required></td></tr>
+                    <tr><th>Aktiv</th><td><label><input type="checkbox" name="active" value="1" <?php checked(!empty($editing['active'])); ?>> Aktiv kampanje</label></td></tr>
+                    <tr><th>Prioritet</th><td><input type="number" name="priority" value="<?php echo esc_attr($editing['priority']); ?>"></td></tr>
+                    <tr><th>Startdato</th><td><input type="datetime-local" name="start" value="<?php echo esc_attr($editing['start']); ?>"></td></tr>
+                    <tr><th>Sluttdato</th><td><input type="datetime-local" name="end" value="<?php echo esc_attr($editing['end']); ?>"></td></tr>
 
-                    <tr><th>Trigger produkter (parent IDer)</th><td><input type="text" name="trigger_products_csv" class="regular-text" placeholder="12,34,56"></td></tr>
-                    <tr><th>Trigger kategorier (term IDer)</th><td><input type="text" name="trigger_categories_csv" class="regular-text" placeholder="3,8"></td></tr>
-                    <tr><th>Trigger tags (term IDer)</th><td><input type="text" name="trigger_tags_csv" class="regular-text" placeholder="2,5"></td></tr>
+                    <tr><th>Trigger produkter (parent IDer)</th><td><input type="text" name="trigger_products_csv" class="regular-text" value="<?php echo esc_attr(implode(',', $editing['trigger_products'])); ?>" placeholder="12,34,56"></td></tr>
+                    <tr><th>Trigger kategorier (term IDer)</th><td><input type="text" name="trigger_categories_csv" class="regular-text" value="<?php echo esc_attr(implode(',', $editing['trigger_categories'])); ?>" placeholder="3,8"></td></tr>
+                    <tr><th>Trigger tags (term IDer)</th><td><input type="text" name="trigger_tags_csv" class="regular-text" value="<?php echo esc_attr(implode(',', $editing['trigger_tags'])); ?>" placeholder="2,5"></td></tr>
 
-                    <tr><th>Minimum antall trigger</th><td><input type="number" name="min_qty" value="1" min="1"></td></tr>
-                    <tr><th>Minimum ordrebeløp</th><td><input type="number" name="min_subtotal" value="0" min="0" step="0.01"></td></tr>
-                    <tr><th>Ekskluder salgsvarer</th><td><label><input type="checkbox" name="exclude_sale" value="1"> Gjelder ikke salgsvarer</label></td></tr>
+                    <tr><th>Minimum antall trigger</th><td><input type="number" name="min_qty" value="<?php echo esc_attr($editing['min_qty']); ?>" min="1"></td></tr>
+                    <tr><th>Minimum ordrebeløp</th><td><input type="number" name="min_subtotal" value="<?php echo esc_attr($editing['min_subtotal']); ?>" min="0" step="0.01"></td></tr>
+                    <tr><th>Ekskluder salgsvarer</th><td><label><input type="checkbox" name="exclude_sale" value="1" <?php checked(!empty($editing['exclude_sale'])); ?>> Gjelder ikke salgsvarer</label></td></tr>
 
-                    <tr><th>Gaveprodukter (IDer)</th><td><input type="text" name="gift_products_csv" class="regular-text" required placeholder="90,91,92"></td></tr>
-                    <tr><th>Kunden kan velge</th><td><input type="number" name="gifts_to_choose" value="1" min="1"> gave(r)</td></tr>
-                    <tr><th>Maks gaver per ordre</th><td><input type="number" name="max_gifts_per_order" value="1" min="1"></td></tr>
-                    <tr><th>Maks per kunde (0=ingen grense)</th><td><input type="number" name="max_per_customer" value="0" min="0"></td></tr>
-                    <tr><th>Krever gavevalg</th><td><label><input type="checkbox" name="require_choice" value="1" checked> Må velge gave før kjøp</label></td></tr>
-                    <tr><th>Auto-gave</th><td><label><input type="checkbox" name="auto_gift" value="1"> Legg til første tilgjengelige gave automatisk</label></td></tr>
+                    <tr><th>Gaveprodukter (IDer)</th><td><input type="text" name="gift_products_csv" class="regular-text" value="<?php echo esc_attr(implode(',', $editing['gift_products'])); ?>" required placeholder="90,91,92"></td></tr>
+                    <tr><th>Kunden kan velge</th><td><input type="number" name="gifts_to_choose" value="<?php echo esc_attr($editing['gifts_to_choose']); ?>" min="1"> gave(r)</td></tr>
+                    <tr><th>Maks gaver per ordre</th><td><input type="number" name="max_gifts_per_order" value="<?php echo esc_attr($editing['max_gifts_per_order']); ?>" min="1"></td></tr>
+                    <tr><th>Maks per kunde (0=ingen grense)</th><td><input type="number" name="max_per_customer" value="<?php echo esc_attr($editing['max_per_customer']); ?>" min="0"></td></tr>
+                    <tr><th>Krever gavevalg</th><td><label><input type="checkbox" name="require_choice" value="1" <?php checked(!empty($editing['require_choice'])); ?>> Må velge gave før kjøp</label></td></tr>
+                    <tr><th>Auto-gave</th><td><label><input type="checkbox" name="auto_gift" value="1" <?php checked(!empty($editing['auto_gift'])); ?>> Legg til første tilgjengelige gave automatisk</label></td></tr>
 
-                    <tr><th>Kort overskrift</th><td><input type="text" name="headline" class="regular-text" value="Gratis gave tilgjengelig"></td></tr>
-                    <tr><th>Beskrivelse/kravtekst</th><td><textarea name="description" rows="3" class="large-text"></textarea></td></tr>
-                    <tr><th>Badge tekst</th><td><input type="text" name="badge" class="regular-text" value="Gratis gave"></td></tr>
-                    <tr><th>CTA tekst</th><td><input type="text" name="cta" class="regular-text" value="Velg gave"></td></tr>
+                    <tr><th>Kort overskrift</th><td><input type="text" name="headline" class="regular-text" value="<?php echo esc_attr($editing['headline']); ?>"></td></tr>
+                    <tr><th>Beskrivelse/kravtekst</th><td><textarea name="description" rows="3" class="large-text"><?php echo esc_textarea($editing['description']); ?></textarea></td></tr>
+                    <tr><th>Badge tekst</th><td><input type="text" name="badge" class="regular-text" value="<?php echo esc_attr($editing['badge']); ?>"></td></tr>
+                    <tr><th>CTA tekst</th><td><input type="text" name="cta" class="regular-text" value="<?php echo esc_attr($editing['cta']); ?>"></td></tr>
                 </table>
 
-                <?php submit_button('Lagre kampanje'); ?>
+                <?php submit_button($edit_id ? 'Oppdater kampanje' : 'Lagre kampanje'); ?>
+                <?php if ($edit_id): ?>
+                    <a href="<?php echo esc_url(admin_url('admin.php?page=ggw-free-gifts')); ?>" class="button" style="margin-left:8px">Avbryt redigering</a>
+                <?php endif; ?>
             </form>
 
             <hr>
@@ -187,6 +203,13 @@ final class GGW_Free_Gift_Campaigns {
                             <td><?php echo esc_html(implode(',', $c['trigger_products'])); ?></td>
                             <td><?php echo esc_html(implode(',', $c['gift_products'])); ?></td>
                             <td>
+                                <a class="button" href="<?php echo esc_url(admin_url('admin.php?page=ggw-free-gifts&edit_campaign=' . rawurlencode($c['id']))); ?>">Rediger</a>
+                                <form method="post" style="display:inline">
+                                    <?php wp_nonce_field(self::NONCE_ACTION, 'ggw_nonce'); ?>
+                                    <input type="hidden" name="ggw_action" value="toggle_campaign_active">
+                                    <input type="hidden" name="id" value="<?php echo esc_attr($c['id']); ?>">
+                                    <button class="button" type="submit"><?php echo $c['active'] ? 'Deaktiver' : 'Aktiver'; ?></button>
+                                </form>
                                 <form method="post" style="display:inline">
                                     <?php wp_nonce_field(self::NONCE_ACTION, 'ggw_nonce'); ?>
                                     <input type="hidden" name="ggw_action" value="delete_campaign">
@@ -212,6 +235,7 @@ final class GGW_Free_Gift_Campaigns {
         $campaigns = self::get_campaigns();
 
         if ($action === 'save_campaign') {
+            $campaign_id = sanitize_text_field(wp_unslash($_POST['campaign_id'] ?? ''));
             $new = self::normalize_campaign([
                 'id' => wp_generate_uuid4(),
                 'title' => sanitize_text_field(wp_unslash($_POST['title'] ?? '')),
@@ -242,7 +266,40 @@ final class GGW_Free_Gift_Campaigns {
                 return;
             }
 
-            $campaigns[] = $new;
+            $was_updated = false;
+            if (!empty($campaign_id)) {
+                foreach ($campaigns as $index => $campaign) {
+                    if ($campaign['id'] !== $campaign_id) continue;
+                    $new['id'] = $campaign_id;
+                    $campaigns[$index] = $new;
+                    $was_updated = true;
+                    break;
+                }
+            }
+            if (!$was_updated) {
+                $campaigns[] = $new;
+            }
+
+            usort($campaigns, function($a, $b){
+                return intval($b['priority']) <=> intval($a['priority']);
+            });
+            update_option(self::OPT_KEY, $campaigns, false);
+            self::soft_invalidate_cache();
+            wp_safe_redirect(admin_url('admin.php?page=ggw-free-gifts'));
+            exit;
+        }
+
+        if ($action === 'toggle_campaign_active') {
+            $id = sanitize_text_field(wp_unslash($_POST['id'] ?? ''));
+            foreach ($campaigns as $index => $campaign) {
+                if ($campaign['id'] !== $id) continue;
+                $campaign['active'] = empty($campaign['active']) ? 1 : 0;
+                $campaigns[$index] = self::normalize_campaign($campaign);
+                break;
+            }
+            usort($campaigns, function($a, $b){
+                return intval($b['priority']) <=> intval($a['priority']);
+            });
             update_option(self::OPT_KEY, $campaigns, false);
             self::soft_invalidate_cache();
             wp_safe_redirect(admin_url('admin.php?page=ggw-free-gifts'));
@@ -769,4 +826,3 @@ final class GGW_Free_Gift_Campaigns {
 }
 
 GGW_Free_Gift_Campaigns::init();
-
