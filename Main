@@ -47,6 +47,7 @@ final class GGW_Free_Gift_Campaigns {
         add_filter('woocommerce_shipping_free_shipping_is_available', [__CLASS__, 'filter_free_shipping_availability'], 20, 3);
         add_filter('woocommerce_coupon_is_valid_for_product', [__CLASS__, 'exclude_gifts_from_coupon_product_validation'], 20, 4);
         add_action('woocommerce_before_cart', [__CLASS__, 'render_cart_status_line'], 5);
+        add_action('wp', [__CLASS__, 'maybe_handle_swap_gift_action']);
 
         // Checkout fallback (støttes kun i klassisk checkout)
         self::register_checkout_fallback_hooks();
@@ -506,6 +507,27 @@ final class GGW_Free_Gift_Campaigns {
         return $out;
     }
 
+    private static function get_first_valid_variation_for_gift($gift_parent_id) {
+        $gift_parent_id = absint($gift_parent_id);
+        if (!$gift_parent_id) return 0;
+
+        $gift_parent = wc_get_product($gift_parent_id);
+        if (!$gift_parent || !$gift_parent->is_type('variable')) return 0;
+
+        $variations = self::get_available_gift_variations($gift_parent_id);
+        foreach ($variations as $variation_row) {
+            $candidate_variation_id = absint($variation_row['id'] ?? 0);
+            if (!$candidate_variation_id) continue;
+            if (self::validate_gift_choice([
+                'gift_products' => [$gift_parent_id],
+            ], $gift_parent_id, $candidate_variation_id)) {
+                return $candidate_variation_id;
+            }
+        }
+
+        return 0;
+    }
+
     private static function validate_gift_choice($campaign, $gift_parent_id, $gift_variation_id = 0) {
         $gift_parent_id = absint($gift_parent_id);
         $gift_variation_id = absint($gift_variation_id);
@@ -534,6 +556,185 @@ final class GGW_Free_Gift_Campaigns {
         $variation = wc_get_product($gift_variation_id);
         if (!$variation || !$variation->is_type('variation')) return [];
         return $variation->get_variation_attributes();
+    }
+
+    private static function campaign_by_id($campaign_id) {
+        $campaign_id = sanitize_text_field((string) $campaign_id);
+        if ($campaign_id === '') return null;
+
+        foreach (self::get_campaigns() as $campaign) {
+            if (($campaign['id'] ?? '') === $campaign_id) {
+                return $campaign;
+            }
+        }
+
+        return null;
+    }
+
+    private static function find_swap_choice_for_gift($campaign, $current_parent_id, $current_variation_id = 0) {
+        $current_parent_id = absint($current_parent_id);
+        $current_variation_id = absint($current_variation_id);
+
+        $gift_ids = array_values(array_unique(array_map('absint', $campaign['gift_products'] ?? [])));
+        if (empty($gift_ids)) return null;
+
+        $start_index = 0;
+        $current_index = array_search($current_parent_id, $gift_ids, true);
+        if ($current_index !== false) {
+            $start_index = intval($current_index) + 1;
+        }
+
+        $count = count($gift_ids);
+        for ($step = 0; $step < $count; $step++) {
+            $index = ($start_index + $step) % $count;
+            $candidate_parent_id = absint($gift_ids[$index]);
+            if (!$candidate_parent_id) continue;
+
+            $candidate_variation_id = 0;
+            $candidate_parent = wc_get_product($candidate_parent_id);
+            if (!$candidate_parent) continue;
+
+            if ($candidate_parent->is_type('variable')) {
+                $candidate_variation_id = self::get_first_valid_variation_for_gift($candidate_parent_id);
+                if (!$candidate_variation_id) continue;
+            }
+
+            if ($candidate_parent_id === $current_parent_id && $candidate_variation_id === $current_variation_id) {
+                continue;
+            }
+
+            if (!self::validate_gift_choice($campaign, $candidate_parent_id, $candidate_variation_id)) {
+                continue;
+            }
+
+            return [
+                'gift_parent_id' => $candidate_parent_id,
+                'gift_variation_id' => $candidate_variation_id,
+            ];
+        }
+
+        return null;
+    }
+
+    private static function update_trigger_item_selection_after_swap($cart, $campaign_id, $old_parent_id, $old_variation_id, $new_parent_id, $new_variation_id) {
+        if (!$cart || $cart->is_empty()) return;
+
+        $campaign_id = sanitize_text_field((string) $campaign_id);
+        $old_key = absint($old_parent_id) . ':' . absint($old_variation_id);
+        $new_entry = [
+            'gift_parent_id' => absint($new_parent_id),
+            'gift_variation_id' => absint($new_variation_id),
+        ];
+        $updated = false;
+
+        foreach ($cart->cart_contents as $item_key => $item) {
+            if (self::cart_item_is_gift($item)) continue;
+            if (($item['_ggw_campaign_id'] ?? '') !== $campaign_id) continue;
+
+            $selected = $item['_ggw_selected_gifts'] ?? [];
+            if (!is_array($selected)) $selected = [];
+
+            $replaced_here = false;
+            foreach ($selected as $idx => $selection) {
+                $selection_key = absint($selection['gift_parent_id'] ?? 0) . ':' . absint($selection['gift_variation_id'] ?? 0);
+                if ($selection_key !== $old_key) continue;
+                $selected[$idx] = $new_entry;
+                $replaced_here = true;
+                $updated = true;
+                break;
+            }
+
+            if (!$replaced_here && !$updated) {
+                $selected[] = $new_entry;
+                $updated = true;
+            }
+
+            if (!empty($selected)) {
+                $cart->cart_contents[$item_key]['_ggw_selected_gifts'] = array_values($selected);
+                $cart->cart_contents[$item_key]['_ggw_selected_gift'] = absint($selected[0]['gift_parent_id'] ?? 0);
+                $cart->cart_contents[$item_key]['_ggw_selected_gift_variation'] = absint($selected[0]['gift_variation_id'] ?? 0);
+            }
+
+            if ($updated) {
+                break;
+            }
+        }
+    }
+
+    public static function maybe_handle_swap_gift_action() {
+        if (empty($_GET['ggw_action']) || sanitize_text_field(wp_unslash($_GET['ggw_action'])) !== 'swap_gift') return;
+
+        $cart = WC()->cart;
+        if (!$cart || $cart->is_empty()) return;
+
+        $gift_key = sanitize_text_field(wp_unslash($_GET['ggw_gift_key'] ?? ''));
+        $nonce = sanitize_text_field(wp_unslash($_GET['_wpnonce'] ?? ''));
+        if ($gift_key === '' || !$nonce || !wp_verify_nonce($nonce, 'ggw_swap_gift_' . $gift_key)) {
+            wc_add_notice(__('Kunne ikke bytte gave. Ugyldig forespørsel.', 'ggw'), 'error');
+            wp_safe_redirect(wc_get_cart_url());
+            exit;
+        }
+
+        $gift_item = $cart->cart_contents[$gift_key] ?? null;
+        if (!$gift_item || !self::cart_item_is_gift($gift_item)) {
+            wc_add_notice(__('Kunne ikke finne gave-linjen som skulle byttes.', 'ggw'), 'error');
+            wp_safe_redirect(wc_get_cart_url());
+            exit;
+        }
+
+        $campaign_id = sanitize_text_field($gift_item['_ggw_campaign_id'] ?? '');
+        $campaign = self::campaign_by_id($campaign_id);
+        if (!$campaign || !self::campaign_active_now($campaign)) {
+            wc_add_notice(__('Kampanjen er ikke lenger aktiv for denne gaven.', 'ggw'), 'error');
+            wp_safe_redirect(wc_get_cart_url());
+            exit;
+        }
+
+        $current_parent_id = absint($gift_item['product_id'] ?? 0);
+        $current_variation_id = absint($gift_item['variation_id'] ?? 0);
+        $replacement = self::find_swap_choice_for_gift($campaign, $current_parent_id, $current_variation_id);
+        if (!$replacement) {
+            wc_add_notice(__('Ingen andre tilgjengelige gavevalg akkurat nå.', 'ggw'), 'notice');
+            wp_safe_redirect(wc_get_cart_url());
+            exit;
+        }
+
+        $new_parent_id = absint($replacement['gift_parent_id'] ?? 0);
+        $new_variation_id = absint($replacement['gift_variation_id'] ?? 0);
+        if (!self::validate_gift_choice($campaign, $new_parent_id, $new_variation_id)) {
+            wc_add_notice(__('Valgt gave er ikke tilgjengelig lenger. Prøv igjen.', 'ggw'), 'error');
+            wp_safe_redirect(wc_get_cart_url());
+            exit;
+        }
+
+        $variation_attributes = $new_variation_id ? self::get_variation_attributes_for_cart($new_variation_id) : [];
+        $add_data = self::mark_cart_item_as_gift(
+            [],
+            $campaign_id,
+            sanitize_text_field($gift_item['_ggw_trigger_key'] ?? ''),
+            absint($gift_item['_ggw_trigger_product_id'] ?? 0),
+            sanitize_text_field($gift_item['_ggw_label'] ?? 'Gratis gave')
+        );
+
+        $new_key = $cart->add_to_cart($new_parent_id, 1, $new_variation_id, $variation_attributes, $add_data);
+        if (!$new_key) {
+            wc_add_notice(__('Kunne ikke oppdatere gave-linjen. Prøv igjen.', 'ggw'), 'error');
+            wp_safe_redirect(wc_get_cart_url());
+            exit;
+        }
+
+        if (isset($cart->cart_contents[$new_key]['data'])) {
+            $cart->cart_contents[$new_key]['data']->set_price(0);
+        }
+        $cart->set_quantity($new_key, 1, false);
+
+        self::update_trigger_item_selection_after_swap($cart, $campaign_id, $current_parent_id, $current_variation_id, $new_parent_id, $new_variation_id);
+        $cart->remove_cart_item($gift_key);
+        $cart->calculate_totals();
+
+        wc_add_notice(__('Gratis gave oppdatert i handlekurven.', 'ggw'), 'success');
+        wp_safe_redirect(wc_get_cart_url());
+        exit;
     }
 
     /* =========================
@@ -1203,6 +1404,16 @@ final class GGW_Free_Gift_Campaigns {
     public static function label_gift_cart_item($name, $cart_item, $cart_item_key) {
         if (self::cart_item_is_gift($cart_item)) {
             $name .= ' <small style="display:block;color:#16a34a;font-weight:600;">Gratis gave</small>';
+            if (function_exists('is_cart') && is_cart()) {
+                $swap_url = wp_nonce_url(
+                    add_query_arg([
+                        'ggw_action' => 'swap_gift',
+                        'ggw_gift_key' => $cart_item_key,
+                    ], wc_get_cart_url()),
+                    'ggw_swap_gift_' . $cart_item_key
+                );
+                $name .= ' <small style="display:block;margin-top:6px;"><a href="' . esc_url($swap_url) . '">Bytt gave</a></small>';
+            }
         }
         return $name;
     }
