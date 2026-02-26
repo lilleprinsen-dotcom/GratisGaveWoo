@@ -51,6 +51,7 @@ final class GGW_Free_Gift_Campaigns {
         add_filter('woocommerce_coupon_is_valid_for_product', [__CLASS__, 'exclude_gifts_from_coupon_product_validation'], 20, 4);
         add_action('woocommerce_before_cart', [__CLASS__, 'render_cart_status_line'], 5);
         add_action('template_redirect', [__CLASS__, 'maybe_handle_swap_gift_action']);
+        add_action('wp_footer', [__CLASS__, 'render_swap_gift_modal_assets']);
 
         // Checkout fallback (støttes kun i klassisk checkout)
         self::register_checkout_fallback_hooks();
@@ -1030,6 +1031,82 @@ GGWJS;
         }
     }
 
+
+    private static function get_available_swap_choices_for_gift($campaign, $current_parent_id, $current_variation_id = 0, $cart = null, $exclude_cart_item_key = '') {
+        $current_parent_id = absint($current_parent_id);
+        $current_variation_id = absint($current_variation_id);
+        $exclude_cart_item_key = sanitize_text_field((string) $exclude_cart_item_key);
+
+        $gift_ids = array_values(array_unique(array_map('absint', $campaign['gift_products'] ?? [])));
+        if (empty($gift_ids)) return [];
+
+        $campaign_id = sanitize_text_field($campaign['id'] ?? '');
+        $counts = [];
+        if ($campaign_id !== '' && $cart && method_exists($cart, 'get_cart')) {
+            foreach ($cart->get_cart() as $item_key => $item) {
+                if ($exclude_cart_item_key !== '' && $item_key === $exclude_cart_item_key) continue;
+                if (!self::cart_item_is_gift($item)) continue;
+                if (($item['_ggw_campaign_id'] ?? '') !== $campaign_id) continue;
+                $gift_parent_id = absint($item['product_id'] ?? 0);
+                if (!$gift_parent_id) continue;
+                $counts[$gift_parent_id] = ($counts[$gift_parent_id] ?? 0) + max(1, intval($item['quantity'] ?? 1));
+            }
+        }
+
+        $choices = [];
+        foreach ($gift_ids as $candidate_parent_id) {
+            if (!$candidate_parent_id) continue;
+            $candidate_variation_id = 0;
+            $candidate_parent = wc_get_product($candidate_parent_id);
+            if (!$candidate_parent) continue;
+
+            if ($candidate_parent->is_type('variable')) {
+                $candidate_variation_id = self::get_first_valid_variation_for_gift($candidate_parent_id);
+                if (!$candidate_variation_id) continue;
+            }
+
+            if ($candidate_parent_id === $current_parent_id && $candidate_variation_id === $current_variation_id) {
+                continue;
+            }
+            if (!self::validate_gift_choice($campaign, $candidate_parent_id, $candidate_variation_id)) {
+                continue;
+            }
+
+            $limit = self::gift_limit_for_campaign_product($campaign, $candidate_parent_id);
+            $already_used = max(0, intval($counts[$candidate_parent_id] ?? 0));
+            if ($limit > 0 && $already_used >= $limit) {
+                continue;
+            }
+
+            $choices[] = [
+                'gift_parent_id' => $candidate_parent_id,
+                'gift_variation_id' => $candidate_variation_id,
+                'product' => $candidate_parent,
+            ];
+        }
+
+        return $choices;
+    }
+
+    private static function get_swap_gift_url($cart_item_key, $target_parent_id = 0, $target_variation_id = 0) {
+        $args = [
+            'ggw_action' => 'swap_gift',
+            'ggw_gift_key' => sanitize_text_field((string) $cart_item_key),
+        ];
+
+        if ($target_parent_id) {
+            $args['ggw_target_parent_id'] = absint($target_parent_id);
+        }
+        if ($target_variation_id) {
+            $args['ggw_target_variation_id'] = absint($target_variation_id);
+        }
+
+        return wp_nonce_url(
+            add_query_arg($args, wc_get_cart_url()),
+            'ggw_swap_gift_' . sanitize_text_field((string) $cart_item_key)
+        );
+    }
+
     public static function maybe_handle_swap_gift_action() {
         if (empty($_GET['ggw_action']) || sanitize_text_field(wp_unslash($_GET['ggw_action'])) !== 'swap_gift') return;
 
@@ -1067,21 +1144,38 @@ GGWJS;
 
             $current_parent_id = absint($gift_item['product_id'] ?? 0);
             $current_variation_id = absint($gift_item['variation_id'] ?? 0);
-            $replacement = self::find_swap_choice_for_gift($campaign, $current_parent_id, $current_variation_id);
-            if (!$replacement) {
-                wc_add_notice(__('Ingen andre tilgjengelige gavevalg akkurat nå.', 'ggw'), 'notice');
-                wp_safe_redirect(wc_get_cart_url());
-                exit;
-            }
 
-            $new_parent_id = absint($replacement['gift_parent_id'] ?? 0);
-            $new_variation_id = absint($replacement['gift_variation_id'] ?? 0);
+            $requested_parent_id = absint($_GET['ggw_target_parent_id'] ?? 0);
+            $requested_variation_id = absint($_GET['ggw_target_variation_id'] ?? 0);
+
+            if ($requested_parent_id > 0) {
+                $new_parent_id = $requested_parent_id;
+                $new_variation_id = $requested_variation_id;
+            } else {
+                $replacement = self::find_swap_choice_for_gift($campaign, $current_parent_id, $current_variation_id);
+                if (!$replacement) {
+                    wc_add_notice(__('Ingen andre tilgjengelige gavevalg akkurat nå.', 'ggw'), 'notice');
+                    wp_safe_redirect(wc_get_cart_url());
+                    exit;
+                }
+
+                $new_parent_id = absint($replacement['gift_parent_id'] ?? 0);
+                $new_variation_id = absint($replacement['gift_variation_id'] ?? 0);
+            }
             if (!self::validate_gift_choice($campaign, $new_parent_id, $new_variation_id)) {
                 wc_add_notice(__('Valgt gave er ikke tilgjengelig lenger. Prøv igjen.', 'ggw'), 'error');
                 wp_safe_redirect(wc_get_cart_url());
                 exit;
             }
-            if (!self::gift_can_be_used_for_campaign($campaign, $new_parent_id, $cart)) {
+            $available_choices = self::get_available_swap_choices_for_gift($campaign, $current_parent_id, $current_variation_id, $cart, $gift_key);
+            $choice_allowed = false;
+            foreach ($available_choices as $choice) {
+                if (absint($choice['gift_parent_id'] ?? 0) === $new_parent_id && absint($choice['gift_variation_id'] ?? 0) === $new_variation_id) {
+                    $choice_allowed = true;
+                    break;
+                }
+            }
+            if (!$choice_allowed) {
                 wc_add_notice(__('Valgt gave har nådd maks antall i kampanjen. Velg en annen gave.', 'ggw'), 'error');
                 wp_safe_redirect(wc_get_cart_url());
                 exit;
@@ -2014,14 +2108,40 @@ GGWJS;
         if (self::cart_item_is_gift($cart_item)) {
             $name .= ' <small style="display:block;color:#16a34a;font-weight:600;">Gratis gave</small>';
             if (function_exists('is_cart') && is_cart()) {
-                $swap_url = wp_nonce_url(
-                    add_query_arg([
-                        'ggw_action' => 'swap_gift',
-                        'ggw_gift_key' => $cart_item_key,
-                    ], wc_get_cart_url()),
-                    'ggw_swap_gift_' . $cart_item_key
-                );
-                $name .= ' <small style="display:block;margin-top:6px;"><a href="' . esc_url($swap_url) . '">Bytt gave</a></small>';
+                $campaign_id = sanitize_text_field($cart_item['_ggw_campaign_id'] ?? '');
+                $campaign = self::campaign_by_id($campaign_id);
+                $choices = $campaign ? self::get_available_swap_choices_for_gift(
+                    $campaign,
+                    absint($cart_item['product_id'] ?? 0),
+                    absint($cart_item['variation_id'] ?? 0),
+                    WC()->cart,
+                    $cart_item_key
+                ) : [];
+
+                if (!empty($choices)) {
+                    $modal_id = 'ggw-swap-modal-' . sanitize_html_class($cart_item_key);
+                    $name .= ' <small style="display:block;margin-top:6px;"><a href="#" class="ggw-open-swap-modal" data-ggw-modal-id="' . esc_attr($modal_id) . '">Bytt gave</a></small>';
+                    $name .= '<div id="' . esc_attr($modal_id) . '" class="ggw-swap-modal" aria-hidden="true">';
+                    $name .= '<div class="ggw-swap-modal__backdrop" data-ggw-modal-close></div>';
+                    $name .= '<div class="ggw-swap-modal__panel" role="dialog" aria-modal="true" aria-label="Bytt gave">';
+                    $name .= '<button type="button" class="ggw-swap-modal__close" data-ggw-modal-close aria-label="Lukk">×</button>';
+                    $name .= '<h4 style="margin:0 0 8px;">Bytt gave</h4>';
+                    $name .= '<p style="margin:0 0 10px;color:#4b5563;font-size:13px;">Velg en annen tilgjengelig gavekombinasjon.</p>';
+                    $name .= '<ul style="margin:0;padding:0;list-style:none;display:grid;gap:8px;">';
+
+                    foreach ($choices as $choice) {
+                        $product = $choice['product'];
+                        $target_parent_id = absint($choice['gift_parent_id'] ?? 0);
+                        $target_variation_id = absint($choice['gift_variation_id'] ?? 0);
+                        $swap_url = self::get_swap_gift_url($cart_item_key, $target_parent_id, $target_variation_id);
+                        $label = $product ? $product->get_name() : __('Gavevalg', 'ggw');
+                        $name .= '<li><a class="button alt" style="width:100%;text-align:center;" href="' . esc_url($swap_url) . '">' . esc_html($label) . '</a></li>';
+                    }
+
+                    $name .= '</ul>';
+                    $name .= '</div>';
+                    $name .= '</div>';
+                }
             }
 
             return $name;
@@ -2032,6 +2152,13 @@ GGWJS;
         }
 
         return $name;
+    }
+
+
+    public static function render_swap_gift_modal_assets() {
+        if (!function_exists('is_cart') || !is_cart()) return;
+        echo '<style>.ggw-swap-modal{position:fixed;inset:0;display:none;z-index:9999}.ggw-swap-modal.is-open{display:block}.ggw-swap-modal__backdrop{position:absolute;inset:0;background:rgba(17,24,39,.45)}.ggw-swap-modal__panel{position:relative;background:#fff;width:min(460px,92vw);margin:10vh auto 0;border-radius:12px;padding:16px;box-shadow:0 20px 50px rgba(0,0,0,.2)}.ggw-swap-modal__close{position:absolute;top:8px;right:10px;border:0;background:transparent;font-size:24px;line-height:1;cursor:pointer;color:#6b7280}</style>';
+        echo '<script>(function(){if(window.__ggwSwapModalReady){return;}window.__ggwSwapModalReady=true;document.addEventListener("click",function(e){var open=e.target.closest(".ggw-open-swap-modal");if(open){e.preventDefault();var id=open.getAttribute("data-ggw-modal-id");var modal=id?document.getElementById(id):null;if(modal){modal.classList.add("is-open");modal.setAttribute("aria-hidden","false");}return;}if(e.target.matches("[data-ggw-modal-close]")){var modal=e.target.closest(".ggw-swap-modal");if(modal){modal.classList.remove("is-open");modal.setAttribute("aria-hidden","true");}}});document.addEventListener("keydown",function(e){if(e.key!=="Escape"){return;}document.querySelectorAll(".ggw-swap-modal.is-open").forEach(function(modal){modal.classList.remove("is-open");modal.setAttribute("aria-hidden","true");});});})();</script>';
     }
 
     public static function display_cart_item_meta($item_data, $cart_item) {
