@@ -1217,6 +1217,13 @@ GGWJS;
 
     public static function validate_add_to_cart($passed, $product_id, $quantity, $variation_id = 0, $variations = []) {
         if (!$passed) return false;
+
+        $requested_product = wc_get_product($product_id);
+        if ($requested_product && $requested_product->is_type('variable') && !$variation_id) {
+            wc_add_notice(__('You must choose a size for this product before adding it to the cart.', 'ggw'), 'error');
+            return false;
+        }
+
         $target_id = $variation_id ? $variation_id : $product_id;
         $campaign = self::get_best_campaign_for_product($target_id);
         if (!$campaign) return $passed;
