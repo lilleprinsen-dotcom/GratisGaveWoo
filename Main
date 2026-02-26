@@ -1298,14 +1298,14 @@ GGWJS;
             }
 
             $selected_variation = absint($gift_variation_map[$gift_id] ?? 0);
-            if (!self::validate_gift_choice($campaign, $gift_id, $selected_variation)) {
-                $error = sprintf(__('Gaven "%s" er ikke tilgjengelig nå. Velg en annen gave.', 'ggw'), get_the_title($gift_id));
+            $gift_product = wc_get_product($gift_id);
+            if ($gift_product && $gift_product->is_type('variable') && !$selected_variation) {
+                $error = sprintf(__('Velg variant for gave "%s" før du legger varen i handlekurven.', 'ggw'), $gift_product->get_name());
                 return null;
             }
 
-            $gift_product = wc_get_product($gift_id);
-            if ($gift_product && $gift_product->is_type('variable') && !$selected_variation) {
-                $error = sprintf(__('Velg variant for gave "%s".', 'ggw'), $gift_product->get_name());
+            if (!self::validate_gift_choice($campaign, $gift_id, $selected_variation)) {
+                $error = sprintf(__('Gaven "%s" er ikke tilgjengelig nå. Velg en annen gave.', 'ggw'), get_the_title($gift_id));
                 return null;
             }
 
