@@ -1040,79 +1040,93 @@ GGWJS;
         $cart = WC()->cart;
         if (!$cart || $cart->is_empty() || !method_exists($cart, 'add_to_cart')) return;
 
-        $gift_key = sanitize_text_field(wp_unslash($_GET['ggw_gift_key'] ?? ''));
-        $nonce = sanitize_text_field(wp_unslash($_GET['_wpnonce'] ?? ''));
-        if ($gift_key === '' || !$nonce || !wp_verify_nonce($nonce, 'ggw_swap_gift_' . $gift_key)) {
-            wc_add_notice(__('Kunne ikke bytte gave. Ugyldig forespørsel.', 'ggw'), 'error');
+        try {
+            $gift_key = sanitize_text_field(wp_unslash($_GET['ggw_gift_key'] ?? ''));
+            $nonce = sanitize_text_field(wp_unslash($_GET['_wpnonce'] ?? ''));
+            if ($gift_key === '' || !$nonce || !wp_verify_nonce($nonce, 'ggw_swap_gift_' . $gift_key)) {
+                wc_add_notice(__('Kunne ikke bytte gave. Ugyldig forespørsel.', 'ggw'), 'error');
+                wp_safe_redirect(wc_get_cart_url());
+                exit;
+            }
+
+            $cart_items = method_exists($cart, 'get_cart') ? $cart->get_cart() : (is_array($cart->cart_contents ?? null) ? $cart->cart_contents : []);
+            $gift_item = $cart_items[$gift_key] ?? null;
+            if (!$gift_item || !self::cart_item_is_gift($gift_item)) {
+                wc_add_notice(__('Kunne ikke finne gave-linjen som skulle byttes.', 'ggw'), 'error');
+                wp_safe_redirect(wc_get_cart_url());
+                exit;
+            }
+
+            $campaign_id = sanitize_text_field($gift_item['_ggw_campaign_id'] ?? '');
+            $campaign = self::campaign_by_id($campaign_id);
+            if (!$campaign || !self::campaign_active_now($campaign)) {
+                wc_add_notice(__('Kampanjen er ikke lenger aktiv for denne gaven.', 'ggw'), 'error');
+                wp_safe_redirect(wc_get_cart_url());
+                exit;
+            }
+
+            $current_parent_id = absint($gift_item['product_id'] ?? 0);
+            $current_variation_id = absint($gift_item['variation_id'] ?? 0);
+            $replacement = self::find_swap_choice_for_gift($campaign, $current_parent_id, $current_variation_id);
+            if (!$replacement) {
+                wc_add_notice(__('Ingen andre tilgjengelige gavevalg akkurat nå.', 'ggw'), 'notice');
+                wp_safe_redirect(wc_get_cart_url());
+                exit;
+            }
+
+            $new_parent_id = absint($replacement['gift_parent_id'] ?? 0);
+            $new_variation_id = absint($replacement['gift_variation_id'] ?? 0);
+            if (!self::validate_gift_choice($campaign, $new_parent_id, $new_variation_id)) {
+                wc_add_notice(__('Valgt gave er ikke tilgjengelig lenger. Prøv igjen.', 'ggw'), 'error');
+                wp_safe_redirect(wc_get_cart_url());
+                exit;
+            }
+            if (!self::gift_can_be_used_for_campaign($campaign, $new_parent_id, $cart)) {
+                wc_add_notice(__('Valgt gave har nådd maks antall i kampanjen. Velg en annen gave.', 'ggw'), 'error');
+                wp_safe_redirect(wc_get_cart_url());
+                exit;
+            }
+
+            $variation_attributes = $new_variation_id ? self::get_variation_attributes_for_cart($new_variation_id) : [];
+            $add_data = self::mark_cart_item_as_gift(
+                [],
+                $campaign_id,
+                sanitize_text_field($gift_item['_ggw_trigger_key'] ?? ''),
+                absint($gift_item['_ggw_trigger_product_id'] ?? 0),
+                sanitize_text_field($gift_item['_ggw_label'] ?? 'Gratis gave')
+            );
+
+            $new_key = $cart->add_to_cart($new_parent_id, 1, $new_variation_id, $variation_attributes, $add_data);
+            if (!$new_key) {
+                wc_add_notice(__('Kunne ikke oppdatere gave-linjen. Prøv igjen.', 'ggw'), 'error');
+                wp_safe_redirect(wc_get_cart_url());
+                exit;
+            }
+
+            $new_item = $cart->cart_contents[$new_key] ?? null;
+            if (isset($new_item['data']) && is_object($new_item['data']) && method_exists($new_item['data'], 'set_price')) {
+                $new_item['data']->set_price(0);
+            }
+            $cart->set_quantity($new_key, 1, false);
+
+            self::update_trigger_item_selection_after_swap($cart, $campaign_id, $current_parent_id, $current_variation_id, $new_parent_id, $new_variation_id);
+            $cart->remove_cart_item($gift_key);
+            $cart->calculate_totals();
+
+            wc_add_notice(__('Gratis gave oppdatert i handlekurven.', 'ggw'), 'success');
+            wp_safe_redirect(wc_get_cart_url());
+            exit;
+        } catch (\Throwable $e) {
+            if (function_exists('wc_get_logger')) {
+                wc_get_logger()->error(
+                    'Swap gift failed: ' . $e->getMessage(),
+                    ['source' => 'ggw-free-gift-campaigns', 'exception' => $e]
+                );
+            }
+            wc_add_notice(__('Kunne ikke bytte gave akkurat nå. Prøv igjen.', 'ggw'), 'error');
             wp_safe_redirect(wc_get_cart_url());
             exit;
         }
-
-        $gift_item = $cart->cart_contents[$gift_key] ?? null;
-        if (!$gift_item || !self::cart_item_is_gift($gift_item)) {
-            wc_add_notice(__('Kunne ikke finne gave-linjen som skulle byttes.', 'ggw'), 'error');
-            wp_safe_redirect(wc_get_cart_url());
-            exit;
-        }
-
-        $campaign_id = sanitize_text_field($gift_item['_ggw_campaign_id'] ?? '');
-        $campaign = self::campaign_by_id($campaign_id);
-        if (!$campaign || !self::campaign_active_now($campaign)) {
-            wc_add_notice(__('Kampanjen er ikke lenger aktiv for denne gaven.', 'ggw'), 'error');
-            wp_safe_redirect(wc_get_cart_url());
-            exit;
-        }
-
-        $current_parent_id = absint($gift_item['product_id'] ?? 0);
-        $current_variation_id = absint($gift_item['variation_id'] ?? 0);
-        $replacement = self::find_swap_choice_for_gift($campaign, $current_parent_id, $current_variation_id);
-        if (!$replacement) {
-            wc_add_notice(__('Ingen andre tilgjengelige gavevalg akkurat nå.', 'ggw'), 'notice');
-            wp_safe_redirect(wc_get_cart_url());
-            exit;
-        }
-
-        $new_parent_id = absint($replacement['gift_parent_id'] ?? 0);
-        $new_variation_id = absint($replacement['gift_variation_id'] ?? 0);
-        if (!self::validate_gift_choice($campaign, $new_parent_id, $new_variation_id)) {
-            wc_add_notice(__('Valgt gave er ikke tilgjengelig lenger. Prøv igjen.', 'ggw'), 'error');
-            wp_safe_redirect(wc_get_cart_url());
-            exit;
-        }
-        if (!self::gift_can_be_used_for_campaign($campaign, $new_parent_id, $cart)) {
-            wc_add_notice(__('Valgt gave har nådd maks antall i kampanjen. Velg en annen gave.', 'ggw'), 'error');
-            wp_safe_redirect(wc_get_cart_url());
-            exit;
-        }
-
-        $variation_attributes = $new_variation_id ? self::get_variation_attributes_for_cart($new_variation_id) : [];
-        $add_data = self::mark_cart_item_as_gift(
-            [],
-            $campaign_id,
-            sanitize_text_field($gift_item['_ggw_trigger_key'] ?? ''),
-            absint($gift_item['_ggw_trigger_product_id'] ?? 0),
-            sanitize_text_field($gift_item['_ggw_label'] ?? 'Gratis gave')
-        );
-
-        $new_key = $cart->add_to_cart($new_parent_id, 1, $new_variation_id, $variation_attributes, $add_data);
-        if (!$new_key) {
-            wc_add_notice(__('Kunne ikke oppdatere gave-linjen. Prøv igjen.', 'ggw'), 'error');
-            wp_safe_redirect(wc_get_cart_url());
-            exit;
-        }
-
-        if (isset($cart->cart_contents[$new_key]['data'])) {
-            $cart->cart_contents[$new_key]['data']->set_price(0);
-        }
-        $cart->set_quantity($new_key, 1, false);
-
-        self::update_trigger_item_selection_after_swap($cart, $campaign_id, $current_parent_id, $current_variation_id, $new_parent_id, $new_variation_id);
-        $cart->remove_cart_item($gift_key);
-        $cart->calculate_totals();
-
-        wc_add_notice(__('Gratis gave oppdatert i handlekurven.', 'ggw'), 'success');
-        wp_safe_redirect(wc_get_cart_url());
-        exit;
     }
 
     /* =========================
