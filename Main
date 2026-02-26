@@ -1999,7 +1999,6 @@ GGWJS;
     public static function label_gift_cart_item($name, $cart_item, $cart_item_key) {
         if (self::cart_item_is_gift($cart_item)) {
             $name .= ' <small style="display:block;color:#16a34a;font-weight:600;">Gratis gave</small>';
-            $name .= ' <small style="display:block;margin-top:4px;color:#92400e;">Belastes fullpris hvis den ikke returneres sammen med hovedproduktet.</small>';
             if (function_exists('is_cart') && is_cart()) {
                 $swap_url = wp_nonce_url(
                     add_query_arg([
@@ -2010,7 +2009,14 @@ GGWJS;
                 );
                 $name .= ' <small style="display:block;margin-top:6px;"><a href="' . esc_url($swap_url) . '">Bytt gave</a></small>';
             }
+
+            return $name;
         }
+
+        if (!empty($cart_item['_ggw_campaign_id'])) {
+            $name .= ' <small style="display:block;margin-top:4px;color:#92400e;">Ved retur av hovedprodukt uten gratis gave(r), belastes gavene til full pris.</small>';
+        }
+
         return $name;
     }
 
