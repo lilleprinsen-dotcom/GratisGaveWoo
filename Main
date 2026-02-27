@@ -536,8 +536,11 @@ final class GGW_Free_Gift_Campaigns {
 .ggw-progressive-actions{display:flex;gap:6px;flex-wrap:wrap}
 .ggw-progressive-add{margin-top:8px}
 .ggw-progressive-empty{padding:10px;border:1px dashed #d1d5db;border-radius:8px;background:#f9fafb;color:#4b5563}
-.ggw-progressive-select{min-width:420px;width:100%;max-width:100%}
-.ggw-progressive-wrap .select2-container{min-width:420px!important;width:100%!important;max-width:100%}
+.ggw-progressive-select{min-width:560px;width:100%;max-width:100%}
+.ggw-progressive-wrap .select2-container{min-width:560px!important;width:100%!important;max-width:100%}
+.ggw-progressive-wrap .select2-selection--multiple{min-height:40px}
+.ggw-progressive-wrap .select2-search--inline{float:none!important;display:block}
+.ggw-progressive-wrap .select2-search--inline .select2-search__field{width:100%!important;min-width:260px;margin-top:6px!important}
 @media (max-width:782px){
   .ggw-progressive-table thead{display:none}
   .ggw-progressive-table tr{display:block;border:1px solid #e5e7eb;border-radius:8px;padding:8px;margin-bottom:8px}
@@ -692,11 +695,26 @@ GGWCSS;
         var enhanceSelect=function(el){
             if(!el||typeof window.jQuery==='undefined'){return;}
             var $el=window.jQuery(el);
+            var hasSelectWoo=typeof $el.selectWoo==='function';
+            var hasSelect2=typeof $el.select2==='function';
+
             if($el.hasClass('select2-hidden-accessible')){
-                $el.selectWoo('destroy');
+                if(hasSelectWoo){
+                    $el.selectWoo('destroy');
+                }else if(hasSelect2){
+                    $el.select2('destroy');
+                }
             }
-            $el.filter(':not(.enhanced)').addClass('enhanced').trigger('wc-enhanced-select-init');
-            $el.trigger('change.select2');
+
+            if(hasSelectWoo){
+                $el.selectWoo({width:'100%'});
+            }else if(hasSelect2){
+                $el.select2({width:'100%'});
+            }else{
+                $el.filter(':not(.enhanced)').addClass('enhanced').trigger('wc-enhanced-select-init');
+            }
+
+            $el.trigger('change');
         };
 
         var renumber=function(){
