@@ -1728,8 +1728,12 @@ GGWJS;
                     echo '<input type="hidden" name="ggw_gift_qty[' . esc_attr($gid) . ']" value="0" data-ggw-hidden-qty data-gift-id="' . esc_attr($gid) . '">';
                     echo '<input type="hidden" name="ggw_gift_variation_id[' . esc_attr($gid) . ']" value="" data-ggw-hidden-var data-gift-id="' . esc_attr($gid) . '">';
                 }
+                for ($step = 0; $step < $step_count; $step++) {
+                    echo '<input type="hidden" name="ggw_progressive_choice[' . esc_attr($step) . ']" value="" data-ggw-step-choice data-step="' . esc_attr($step) . '">';
+                    echo '<input type="hidden" name="ggw_progressive_choice_variation[' . esc_attr($step) . ']" value="" data-ggw-step-var data-step="' . esc_attr($step) . '">';
+                }
                 echo '</div>';
-                echo '<script>(function(){var root=document.querySelector("[data-ggw-progressive]");if(!root){return;}var slides=[].slice.call(root.querySelectorAll("[data-ggw-progressive-slide]"));var cards=[].slice.call(root.querySelectorAll("[data-ggw-card]"));if(!slides.length){return;}var back=root.querySelector("[data-ggw-back]");var next=root.querySelector("[data-ggw-next]");var progress=root.querySelector("[data-ggw-progressive-progress]");var error=root.querySelector("[data-ggw-error]");var qty=[].slice.call(root.querySelectorAll("[data-ggw-hidden-qty]"));var vars=[].slice.call(root.querySelectorAll("[data-ggw-hidden-var]"));var selected={};var current=0;var max=slides.length-1;var toInt=function(v){var n=parseInt(v,10);return isNaN(n)?0:n;};var getByStep=function(step){return cards.filter(function(c){return toInt(c.getAttribute("data-step"))===step;});};var setError=function(msg){if(error){error.textContent=msg||"";}};var syncHidden=function(){qty.forEach(function(i){i.value="0";});vars.forEach(function(i){i.value="";});Object.keys(selected).forEach(function(k){var s=selected[k];var q=root.querySelector("[data-ggw-hidden-qty][data-gift-id=\""+s.giftId+"\"]");if(q){q.value="1";}var v=root.querySelector("[data-ggw-hidden-var][data-gift-id=\""+s.giftId+"\"]");if(v){v.value=s.variationId?String(s.variationId):"";}});};var paint=function(){slides.forEach(function(slide,idx){slide.classList.toggle("is-active",idx===current);});cards.forEach(function(card){var step=toInt(card.getAttribute("data-step"));var gift=toInt(card.getAttribute("data-gift-id"));var picked=selected[step]&&selected[step].giftId===gift;card.classList.toggle("is-selected",!!picked);card.setAttribute("aria-selected",picked?"true":"false");});if(progress){progress.textContent="Gift "+(current+1)+" of "+slides.length;}if(back){back.disabled=current===0;}if(next){next.textContent=current===max?"Ferdig":"Neste";}var focusEl=slides[current].querySelector(".ggw-progressive-card.is-selected")||slides[current].querySelector(".ggw-progressive-card");if(focusEl){window.requestAnimationFrame(function(){focusEl.focus();});}syncHidden();};var validate=function(step){if(!selected[step]){return "Velg en gave før du går videre.";}var card=root.querySelector("[data-ggw-card][data-step=\""+step+"\"][data-gift-id=\""+selected[step].giftId+"\"]");if(!card){return "Velg en gyldig gave.";}var select=card.querySelector("[data-ggw-var]");if(select&&String(select.value||"")===""){return "Velg variant før du går videre.";}return "";};cards.forEach(function(card){var pick=function(){var step=toInt(card.getAttribute("data-step"));var gift=toInt(card.getAttribute("data-gift-id"));var select=card.querySelector("[data-ggw-var]");selected[step]={giftId:gift,variationId:select?toInt(select.value):0};setError("");paint();};card.addEventListener("click",pick);card.addEventListener("keydown",function(e){if(e.key==="Enter"||e.key===" "){e.preventDefault();pick();}if(e.key==="ArrowRight"&&current<max){e.preventDefault();current++;paint();}if(e.key==="ArrowLeft"&&current>0){e.preventDefault();current--;paint();}});var select=card.querySelector("[data-ggw-var]");if(select){select.addEventListener("click",function(e){e.stopPropagation();});select.addEventListener("change",function(){var step=toInt(card.getAttribute("data-step"));if(selected[step]&&selected[step].giftId===toInt(card.getAttribute("data-gift-id"))){selected[step].variationId=toInt(select.value);syncHidden();}});}});if(back){back.addEventListener("click",function(){if(current>0){current--;setError("");paint();}});}if(next){next.addEventListener("click",function(){var problem=validate(current);if(problem){setError(problem);return;}if(current<max){current++;setError("");paint();}});}paint();})();</script>';
+                echo '<script>(function(){var root=document.querySelector("[data-ggw-progressive]");if(!root){return;}var slides=[].slice.call(root.querySelectorAll("[data-ggw-progressive-slide]"));var cards=[].slice.call(root.querySelectorAll("[data-ggw-card]"));if(!slides.length){return;}var back=root.querySelector("[data-ggw-back]");var next=root.querySelector("[data-ggw-next]");var progress=root.querySelector("[data-ggw-progressive-progress]");var error=root.querySelector("[data-ggw-error]");var qty=[].slice.call(root.querySelectorAll("[data-ggw-hidden-qty]"));var vars=[].slice.call(root.querySelectorAll("[data-ggw-hidden-var]"));var stepChoices=[].slice.call(root.querySelectorAll("[data-ggw-step-choice]"));var stepVars=[].slice.call(root.querySelectorAll("[data-ggw-step-var]"));var selected={};var current=0;var max=slides.length-1;var toInt=function(v){var n=parseInt(v,10);return isNaN(n)?0:n;};var getByStep=function(step){return cards.filter(function(c){return toInt(c.getAttribute("data-step"))===step;});};var setError=function(msg){if(error){error.textContent=msg||"";}};var syncHidden=function(){qty.forEach(function(i){i.value="0";});vars.forEach(function(i){i.value="";});stepChoices.forEach(function(i){i.value="";});stepVars.forEach(function(i){i.value="";});Object.keys(selected).forEach(function(k){var s=selected[k];var q=root.querySelector("[data-ggw-hidden-qty][data-gift-id=\""+s.giftId+"\"]");if(q){q.value="1";}var v=root.querySelector("[data-ggw-hidden-var][data-gift-id=\""+s.giftId+"\"]");if(v){v.value=s.variationId?String(s.variationId):"";}var c=root.querySelector("[data-ggw-step-choice][data-step=\""+k+"\"]");if(c){c.value=String(s.giftId);}var sv=root.querySelector("[data-ggw-step-var][data-step=\""+k+"\"]");if(sv){sv.value=s.variationId?String(s.variationId):"";}});};var paint=function(){slides.forEach(function(slide,idx){slide.classList.toggle("is-active",idx===current);});cards.forEach(function(card){var step=toInt(card.getAttribute("data-step"));var gift=toInt(card.getAttribute("data-gift-id"));var picked=selected[step]&&selected[step].giftId===gift;card.classList.toggle("is-selected",!!picked);card.setAttribute("aria-selected",picked?"true":"false");});if(progress){progress.textContent="Gift "+(current+1)+" of "+slides.length;}if(back){back.disabled=current===0;}if(next){next.textContent=current===max?"Ferdig":"Neste";}var focusEl=slides[current].querySelector(".ggw-progressive-card.is-selected")||slides[current].querySelector(".ggw-progressive-card");if(focusEl){window.requestAnimationFrame(function(){focusEl.focus();});}syncHidden();};var validate=function(step){if(!selected[step]){return "Velg en gave før du går videre.";}var card=root.querySelector("[data-ggw-card][data-step=\""+step+"\"][data-gift-id=\""+selected[step].giftId+"\"]");if(!card){return "Velg en gyldig gave.";}var select=card.querySelector("[data-ggw-var]");if(select&&String(select.value||"")===""){return "Velg variant før du går videre.";}return "";};cards.forEach(function(card){var pick=function(){var step=toInt(card.getAttribute("data-step"));var gift=toInt(card.getAttribute("data-gift-id"));var select=card.querySelector("[data-ggw-var]");selected[step]={giftId:gift,variationId:select?toInt(select.value):0};setError("");paint();};card.addEventListener("click",pick);card.addEventListener("keydown",function(e){if(e.key==="Enter"||e.key===" "){e.preventDefault();pick();}if(e.key==="ArrowRight"&&current<max){e.preventDefault();current++;paint();}if(e.key==="ArrowLeft"&&current>0){e.preventDefault();current--;paint();}});var select=card.querySelector("[data-ggw-var]");if(select){select.addEventListener("click",function(e){e.stopPropagation();});select.addEventListener("change",function(){var step=toInt(card.getAttribute("data-step"));if(selected[step]&&selected[step].giftId===toInt(card.getAttribute("data-gift-id"))){selected[step].variationId=toInt(select.value);syncHidden();}});}});if(back){back.addEventListener("click",function(){if(current>0){current--;setError("");paint();}});}if(next){next.addEventListener("click",function(){var problem=validate(current);if(problem){setError(problem);return;}if(current<max){current++;setError("");paint();}});}paint();})();</script>';
                 echo '<input type="hidden" name="ggw_campaign_id" value="' . esc_attr($campaign['id']) . '">';
                 echo '<p style="font-size:12px;color:#6b7280;margin-top:6px;">Vi bekrefter gavevalget ditt i handlekurv og checkout.</p>';
                 echo '</div>';
@@ -1868,6 +1872,15 @@ GGWJS;
     }
 
     private static function collect_selected_gifts_from_request($campaign, $cart = null, &$error = '') {
+        $chooser_mode = self::sanitize_gift_chooser_mode($campaign['gift_chooser_mode'] ?? 'classic');
+        if ($chooser_mode === 'progressive') {
+            return self::collect_progressive_selected_gifts_from_request($campaign, $cart, $error);
+        }
+
+        return self::collect_classic_selected_gifts_from_request($campaign, $cart, $error);
+    }
+
+    private static function collect_classic_selected_gifts_from_request($campaign, $cart = null, &$error = '') {
         $required_count = max(1, intval($campaign['gifts_to_choose'] ?? 1));
         $posted_qty = $_POST['ggw_gift_qty'] ?? [];
         $gift_variation_map = $_POST['ggw_gift_variation_id'] ?? [];
@@ -1924,6 +1937,86 @@ GGWJS;
         }
 
         return $selected_gifts;
+    }
+
+    private static function collect_progressive_selected_gifts_from_request($campaign, $cart = null, &$error = '') {
+        $required_count = self::required_progressive_selection_count($campaign);
+        $choices_by_step = $_POST['ggw_progressive_choice'] ?? [];
+        $variation_by_step = $_POST['ggw_progressive_variation_id'] ?? ($_POST['ggw_progressive_choice_variation'] ?? []);
+
+        if (!is_array($choices_by_step)) {
+            $error = __('Velg gave i steg 1 før du legger varen i handlekurven.', 'ggw');
+            return null;
+        }
+        if (!is_array($variation_by_step)) $variation_by_step = [];
+
+        $selected_steps = [];
+        foreach ($choices_by_step as $step_raw => $gift_id_raw) {
+            $step = max(0, intval($step_raw));
+            $gift_id = absint($gift_id_raw);
+            if (!$gift_id) continue;
+            $selected_steps[$step] = $gift_id;
+        }
+
+        ksort($selected_steps, SORT_NUMERIC);
+
+        if (count($selected_steps) !== $required_count) {
+            $error = sprintf(__('Du må velge nøyaktig %d gave(r) før du legger varen i handlekurven.', 'ggw'), $required_count);
+            return null;
+        }
+
+        $selected_gifts = [];
+        $planned_counts = [];
+
+        for ($step = 0; $step < $required_count; $step++) {
+            if (empty($selected_steps[$step])) {
+                $error = sprintf(__('Velg gave i steg %d før du legger varen i handlekurven.', 'ggw'), $step + 1);
+                return null;
+            }
+
+            $gift_id = absint($selected_steps[$step]);
+            $selected_variation = absint($variation_by_step[$step] ?? 0);
+            $gift_product = wc_get_product($gift_id);
+
+            if ($gift_product && $gift_product->is_type('variable') && !$selected_variation) {
+                $error = sprintf(__('Velg variant i steg %d før du legger varen i handlekurven.', 'ggw'), $step + 1);
+                return null;
+            }
+
+            if (!self::validate_gift_choice($campaign, $gift_id, $selected_variation)) {
+                $error = sprintf(__('Valget i steg %d er ikke tilgjengelig nå. Velg en annen gave.', 'ggw'), $step + 1);
+                return null;
+            }
+
+            if (!self::gift_can_be_used_for_campaign($campaign, $gift_id, $cart ?: WC()->cart, $planned_counts)) {
+                $error = sprintf(__('Gaven i steg %d har nådd maks antall for denne kampanjen.', 'ggw'), $step + 1);
+                return null;
+            }
+
+            $planned_counts[$gift_id] = intval($planned_counts[$gift_id] ?? 0) + 1;
+            $selected_gifts[] = [
+                'gift_parent_id' => $gift_id,
+                'gift_variation_id' => $selected_variation,
+            ];
+        }
+
+        if (count($selected_gifts) !== $required_count) {
+            $error = sprintf(__('Du må velge nøyaktig %d gave(r) før du legger varen i handlekurven.', 'ggw'), $required_count);
+            return null;
+        }
+
+        return $selected_gifts;
+    }
+
+    private static function required_progressive_selection_count($campaign) {
+        $base_required = max(1, intval($campaign['gifts_to_choose'] ?? 1));
+        $requested_qty = max(1, intval($_REQUEST['quantity'] ?? 1));
+        $entitled_total = self::campaign_entitled_total($campaign, $requested_qty);
+        if ($entitled_total > 0) {
+            $base_required = $entitled_total;
+        }
+
+        return $base_required;
     }
 
     /* =========================
