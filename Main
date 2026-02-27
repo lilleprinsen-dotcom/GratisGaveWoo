@@ -145,8 +145,6 @@ final class GGW_Free_Gift_Campaigns {
             'gift_products' => [],
             'gift_product_limits' => [],
             'gifts_to_choose' => 1,
-            'gift_chooser_view' => 'classic',
-            'progressive_step_gifts' => [],
             'max_gifts_per_order' => 1,
             'max_per_customer' => 0,
             'require_choice' => 1,
@@ -187,24 +185,6 @@ final class GGW_Free_Gift_Campaigns {
         $c['priority'] = intval($c['priority']);
         $c['min_qty'] = max(1, intval($c['min_qty']));
         $c['gifts_to_choose'] = max(1, intval($c['gifts_to_choose']));
-        $c['gift_chooser_view'] = self::sanitize_gift_chooser_view($c['gift_chooser_view'] ?? 'classic');
-        if (!is_array($c['progressive_step_gifts'])) {
-            $c['progressive_step_gifts'] = [];
-        }
-        $normalized_steps = [];
-        for ($step_index = 1; $step_index <= $c['gifts_to_choose']; $step_index++) {
-            $step_key = (string) $step_index;
-            $step_gifts = $c['progressive_step_gifts'][$step_key] ?? $c['progressive_step_gifts'][$step_index] ?? [];
-            if (!is_array($step_gifts)) {
-                $step_gifts = [];
-            }
-            $step_gifts = array_values(array_unique(array_map('absint', $step_gifts)));
-            $step_gifts = array_values(array_filter($step_gifts, function ($gift_id) use ($c) {
-                return in_array($gift_id, $c['gift_products'], true);
-            }));
-            $normalized_steps[$step_key] = $step_gifts;
-        }
-        $c['progressive_step_gifts'] = $normalized_steps;
         $c['max_gifts_per_order'] = max(1, intval($c['max_gifts_per_order']));
         $c['max_per_customer'] = max(0, intval($c['max_per_customer']));
         $c['min_subtotal'] = max(0, floatval($c['min_subtotal']));
@@ -329,25 +309,6 @@ final class GGW_Free_Gift_Campaigns {
     private static function sanitize_gift_image_object_fit($fit) {
         $fit = sanitize_key($fit);
         return in_array($fit, ['cover', 'contain'], true) ? $fit : 'cover';
-    }
-
-    private static function sanitize_gift_chooser_view($view) {
-        $view = sanitize_key($view);
-        return in_array($view, ['classic', 'progressive'], true) ? $view : 'classic';
-    }
-
-    private static function sanitize_progressive_step_gifts($value) {
-        if (is_array($value)) {
-            return array_values(array_unique(array_filter(array_map('absint', $value))));
-        }
-
-        $raw = sanitize_text_field(wp_unslash((string) $value));
-        if ($raw === '') {
-            return [];
-        }
-
-        $parts = preg_split('/[\s,]+/', $raw);
-        return array_values(array_unique(array_filter(array_map('absint', (array) $parts))));
     }
 
     private static function sanitize_gift_image_aspect_ratio($ratio) {
@@ -563,22 +524,6 @@ GGWJS;
                     <tr><th>Gaveprodukter kunden kan få</th><td><?php self::render_product_multiselect('gift_products_csv', $editing['gift_products'], true); ?><p class="description">Disse produktene blir tilgjengelige som gratis gavevalg.</p></td></tr>
                     <tr><th>Maks per spesifikk gave</th><td><?php self::render_gift_limits_fields($editing); ?><p class="description">Sett valgfri maksgrense per gaveprodukt i samme kampanje.</p></td></tr>
                     <tr><th>Hvor mange gaver kunden kan velge</th><td><input type="number" name="gifts_to_choose" value="<?php echo esc_attr($editing['gifts_to_choose']); ?>" min="1"> gave(r)<p class="description">Antall gavevalg per oppnådd "gave-runde".</p></td></tr>
-                    <tr><th>Gavevelger-opplevelse</th><td>
-                        <select name="gift_chooser_view">
-                            <option value="classic" <?php selected($editing['gift_chooser_view'] ?? 'classic', 'classic'); ?>>Klassisk gaveoversikt</option>
-                            <option value="progressive" <?php selected($editing['gift_chooser_view'] ?? 'classic', 'progressive'); ?>>Ny progressiv flyt (slide per steg)</option>
-                        </select>
-                        <p class="description">Velg klassisk oversikt eller progressiv flyt der kunden velger gave steg-for-steg.</p>
-                    </td></tr>
-                    <tr><th>Progressiv flyt: gaver per steg</th><td>
-                        <p class="description" style="margin-top:0;">Definer hvilke gaveprodukter som skal vises i hvert steg. La felt stå tomt for å bruke alle gaveproduktene i steget.</p>
-                        <?php for ($ggw_step = 1; $ggw_step <= max(1, intval($editing['gifts_to_choose'])); $ggw_step++): ?>
-                            <?php $ggw_step_key = (string) $ggw_step; ?>
-                            <p style="margin:8px 0 4px;"><strong>Steg <?php echo intval($ggw_step); ?></strong></p>
-                            <input type="text" name="progressive_step_gifts[<?php echo esc_attr($ggw_step_key); ?>]" class="regular-text" value="<?php echo esc_attr(implode(',', array_map('absint', (array) ($editing['progressive_step_gifts'][$ggw_step_key] ?? [])))); ?>" placeholder="F.eks. 123,456">
-                        <?php endfor; ?>
-                        <p class="description">Bruk produkt-IDer separert med komma. Kun produkter i «Gaveprodukter kunden kan få» brukes.</p>
-                    </td></tr>
                     <tr><th>Maks gaver per ordre</th><td><input type="number" name="max_gifts_per_order" value="<?php echo esc_attr($editing['max_gifts_per_order']); ?>" min="1"><p class="description" style="margin-top:6px;">Sikkerhetsgrense for antall gaver i én bestilling. Regel: treff = gulv(trigger-antall / minimum antall trigger). Gaverett = min(maks gaver per ordre, treff × kunden kan velge).</p></td></tr>
                     <tr><th>Bildevisning for gavevalg</th><td data-ggw-gift-config>
                         <?php $gift_layout_presets = self::get_gift_image_layout_presets(); ?>
@@ -725,8 +670,6 @@ GGWJS;
                 'gift_products' => self::csv_to_ids($_POST['gift_products_csv'] ?? ''),
                 'gift_product_limits' => array_map('intval', (array) ($_POST['gift_product_limits'] ?? [])),
                 'gifts_to_choose' => intval($_POST['gifts_to_choose'] ?? 1),
-                'gift_chooser_view' => sanitize_key(wp_unslash($_POST['gift_chooser_view'] ?? 'classic')),
-                'progressive_step_gifts' => [],
                 'max_gifts_per_order' => intval($_POST['max_gifts_per_order'] ?? 1),
                 'max_per_customer' => intval($_POST['max_per_customer'] ?? 0),
                 'require_choice' => !empty($_POST['require_choice']),
@@ -746,16 +689,6 @@ GGWJS;
             if (empty($new['title']) || empty($new['gift_products'])) {
                 add_action('admin_notices', function(){ echo '<div class="notice notice-error"><p>Tittel og gaveprodukter er påkrevd.</p></div>'; });
                 return;
-            }
-
-            if ($new['gift_chooser_view'] === 'progressive') {
-                $parsed_step_gifts = [];
-                for ($step_index = 1; $step_index <= $new['gifts_to_choose']; $step_index++) {
-                    $step_key = (string) $step_index;
-                    $raw_step = $_POST['progressive_step_gifts'][$step_key] ?? $_POST['progressive_step_gifts'][$step_index] ?? '';
-                    $parsed_step_gifts[$step_key] = self::sanitize_progressive_step_gifts($raw_step);
-                }
-                $new['progressive_step_gifts'] = $parsed_step_gifts;
             }
 
             $was_updated = false;
@@ -1355,9 +1288,7 @@ GGWJS;
         }
 
         // If require choice, render gift grid with quantities.
-        if (!empty($campaign['require_choice']) && empty($campaign['auto_gift']) && ($campaign['gift_chooser_view'] ?? 'classic') === 'progressive') {
-            self::render_progressive_gift_ui($campaign, $gift_ids);
-        } elseif (!empty($campaign['require_choice']) && empty($campaign['auto_gift'])) {
+        if (!empty($campaign['require_choice']) && empty($campaign['auto_gift'])) {
             $choice_slots = max(1, intval($campaign['gifts_to_choose'] ?? 1));
             echo '<p style="font-size:12px;color:#374151;margin:0 0 8px;">Velg totalt <strong>' . intval($choice_slots) . '</strong> gave(r). Trykk <strong>+</strong> for å legge til og <strong>−</strong> for å fjerne.</p>';
 
@@ -1434,68 +1365,6 @@ GGWJS;
         echo '</div>';
     }
 
-    private static function get_progressive_step_gifts($campaign, $gift_ids, $step_index) {
-        $step_key = (string) max(1, intval($step_index));
-        $configured = $campaign['progressive_step_gifts'][$step_key] ?? [];
-        if (!is_array($configured)) {
-            $configured = [];
-        }
-
-        $configured = array_values(array_filter(array_map('absint', $configured), function ($gift_id) use ($gift_ids) {
-            return in_array($gift_id, $gift_ids, true);
-        }));
-
-        return !empty($configured) ? $configured : $gift_ids;
-    }
-
-    private static function render_progressive_gift_ui($campaign, $gift_ids) {
-        $choice_slots = max(1, intval($campaign['gifts_to_choose'] ?? 1));
-        $gift_card_layout = self::get_gift_card_layout($campaign);
-        $card_aspect_ratio = self::sanitize_gift_image_aspect_ratio($gift_card_layout['aspect_ratio'] ?? '1/1');
-        $card_object_fit = in_array($gift_card_layout['object_fit'] ?? 'cover', ['cover', 'contain'], true) ? $gift_card_layout['object_fit'] : 'cover';
-
-        echo '<style>.ggw-progressive-shell{border:1px solid #d1d5db;border-radius:14px;background:#fff;padding:14px;max-width:720px;overflow:hidden}.ggw-progressive-top{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:12px;color:#4b5563;margin-bottom:10px}.ggw-progressive-track{display:flex;transition:transform .35s ease}.ggw-progressive-step{min-width:100%;box-sizing:border-box}.ggw-progressive-step h4{margin:0 0 8px;font-size:16px;color:#111827}.ggw-progressive-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.ggw-progressive-card{border:1px solid #d1d5db;border-radius:12px;padding:10px;background:#fff;cursor:pointer;transition:all .2s}.ggw-progressive-card.is-selected{border-color:#111827;box-shadow:0 0 0 1px #111827 inset}.ggw-progressive-media{display:block;aspect-ratio:' . esc_attr($card_aspect_ratio) . ';border-radius:10px;overflow:hidden;background:#f3f4f6}.ggw-progressive-media img{width:100%;height:100%;object-fit:' . esc_attr($card_object_fit) . ';display:block}.ggw-progressive-name{display:block;margin-top:8px;font-size:13px;line-height:1.3;color:#111827}.ggw-progressive-actions{margin-top:12px;display:flex;justify-content:space-between;align-items:center;gap:8px}.ggw-progressive-btn{border:1px solid #111827;background:#111827;color:#fff;padding:8px 12px;border-radius:999px;font-size:13px;cursor:pointer}.ggw-progressive-btn[disabled]{opacity:.4;cursor:not-allowed}.ggw-progressive-btn--ghost{background:#fff;color:#111827}.ggw-progressive-status{font-size:12px;color:#4b5563}@media (max-width:640px){.ggw-progressive-shell{padding:12px;border-radius:12px}.ggw-progressive-grid{grid-template-columns:1fr}}</style>';
-        echo '<div class="ggw-progressive-shell" data-ggw-progressive-shell data-step-count="' . esc_attr($choice_slots) . '">';
-        echo '<div class="ggw-progressive-top"><strong>Stegvis gavevalg</strong><span data-ggw-step-label>Steg 1 av ' . esc_html($choice_slots) . '</span></div>';
-        echo '<div class="ggw-progressive-track" data-ggw-progressive-track>';
-
-        for ($step = 1; $step <= $choice_slots; $step++) {
-            $step_gifts = self::get_progressive_step_gifts($campaign, $gift_ids, $step);
-            echo '<section class="ggw-progressive-step" data-ggw-step="' . esc_attr($step) . '">';
-            echo '<h4>Velg gave ' . esc_html($step) . '</h4>';
-            echo '<div class="ggw-progressive-grid">';
-            foreach ($step_gifts as $gid) {
-                $gp = wc_get_product($gid);
-                if (!$gp) continue;
-                $image_id = $gp->get_image_id();
-                $image_html = $image_id
-                    ? wp_get_attachment_image($image_id, 'woocommerce_thumbnail', false, ['loading' => 'lazy', 'decoding' => 'async'])
-                    : wc_placeholder_img('woocommerce_thumbnail');
-
-                echo '<button type="button" class="ggw-progressive-card" data-ggw-progressive-choice data-step="' . esc_attr($step) . '" data-gift-id="' . esc_attr($gid) . '">';
-                echo '<span class="ggw-progressive-media">' . wp_kses_post($image_html) . '</span>';
-                echo '<span class="ggw-progressive-name">' . esc_html($gp->get_name()) . '</span>';
-                echo '</button>';
-            }
-            echo '</div>';
-            echo '</section>';
-        }
-
-        echo '</div>';
-        echo '<div class="ggw-progressive-actions">';
-        echo '<button type="button" class="ggw-progressive-btn ggw-progressive-btn--ghost" data-ggw-progressive-back disabled>Tilbake</button>';
-        echo '<span class="ggw-progressive-status" data-ggw-progressive-status>Velg én gave for å gå videre.</span>';
-        echo '<button type="button" class="ggw-progressive-btn" data-ggw-progressive-next disabled>Neste</button>';
-        echo '</div>';
-        echo '<input type="hidden" name="ggw_progressive_selection" value="" data-ggw-progressive-selection>';
-        echo '</div>';
-
-        echo '<script>(function(){var shell=document.querySelector("[data-ggw-progressive-shell]");if(!shell){return;}var track=shell.querySelector("[data-ggw-progressive-track]");var stepLabel=shell.querySelector("[data-ggw-step-label]");var status=shell.querySelector("[data-ggw-progressive-status]");var backBtn=shell.querySelector("[data-ggw-progressive-back]");var nextBtn=shell.querySelector("[data-ggw-progressive-next]");var hidden=shell.querySelector("[data-ggw-progressive-selection]");var total=parseInt(shell.getAttribute("data-step-count")||"1",10);var current=1;var picks={};var choices=shell.querySelectorAll("[data-ggw-progressive-choice]");var stepChoices={};choices.forEach(function(btn){var step=btn.getAttribute("data-step");if(!stepChoices[step]){stepChoices[step]=[];}stepChoices[step].push(btn);btn.addEventListener("click",function(){stepChoices[step].forEach(function(el){el.classList.remove("is-selected");});btn.classList.add("is-selected");picks[step]=btn.getAttribute("data-gift-id");render();});});var updateTrack=function(){track.style.transform="translateX("+((current-1)*-100)+"%)";};var render=function(){updateTrack();stepLabel.textContent="Steg "+current+" av "+total;backBtn.disabled=current<=1;var selected=!!picks[String(current)];nextBtn.disabled=!selected;var complete=Object.keys(picks).length===total;nextBtn.textContent=current===total?"Ferdig":"Neste";status.textContent=selected?(current===total?"Trykk Ferdig for å bekrefte gavevalgene.":"Flott! Gå videre til neste steg."):"Velg én gave for å gå videre.";var ordered=[];for(var i=1;i<=total;i++){if(picks[String(i)]){ordered.push({gift_parent_id:parseInt(picks[String(i)],10),gift_variation_id:0});}}hidden.value=JSON.stringify(ordered);};backBtn.addEventListener("click",function(){if(current>1){current--;render();}});nextBtn.addEventListener("click",function(){if(!picks[String(current)]){render();return;}if(current<total){current++;render();return;}status.textContent="Gavevalg er klart. Legg produktet i handlekurven.";});render();})();</script>';
-
-        echo '<input type="hidden" name="ggw_campaign_id" value="' . esc_attr($campaign['id']) . '">';
-        echo '<p style="font-size:12px;color:#6b7280;margin-top:6px;">Velg én gave per steg. Vi bekrefter gavevalget i handlekurv og checkout.</p>';
-    }
-
     public static function validate_add_to_cart($passed, $product_id, $quantity, $variation_id = 0, $variations = []) {
         if (!$passed) return false;
 
@@ -1555,45 +1424,6 @@ GGWJS;
 
     private static function collect_selected_gifts_from_request($campaign, $cart = null, &$error = '') {
         $required_count = max(1, intval($campaign['gifts_to_choose'] ?? 1));
-        $progressive_payload = $_POST['ggw_progressive_selection'] ?? '';
-        if (is_string($progressive_payload) && trim($progressive_payload) !== '') {
-            $decoded = json_decode(wp_unslash($progressive_payload), true);
-            if (!is_array($decoded)) {
-                $error = __('Klarte ikke å lese gavevalget. Velg gavene på nytt.', 'ggw');
-                return null;
-            }
-
-            $selected_gifts = [];
-            $planned_counts = [];
-            foreach ($decoded as $row) {
-                $gift_id = absint($row['gift_parent_id'] ?? 0);
-                $variation_id = absint($row['gift_variation_id'] ?? 0);
-                if (!$gift_id) {
-                    continue;
-                }
-                if (!self::validate_gift_choice($campaign, $gift_id, $variation_id)) {
-                    $error = __('Et eller flere gavevalg er ikke lenger tilgjengelig. Velg på nytt.', 'ggw');
-                    return null;
-                }
-                if (!self::gift_can_be_used_for_campaign($campaign, $gift_id, $cart ?: WC()->cart, $planned_counts)) {
-                    $error = sprintf(__('Gaven "%s" har nådd maks antall for denne kampanjen.', 'ggw'), get_the_title($gift_id));
-                    return null;
-                }
-                $planned_counts[$gift_id] = intval($planned_counts[$gift_id] ?? 0) + 1;
-                $selected_gifts[] = [
-                    'gift_parent_id' => $gift_id,
-                    'gift_variation_id' => $variation_id,
-                ];
-            }
-
-            if (count($selected_gifts) !== $required_count) {
-                $error = sprintf(__('Du må velge nøyaktig %d gave(r) før du legger varen i handlekurven.', 'ggw'), $required_count);
-                return null;
-            }
-
-            return $selected_gifts;
-        }
-
         $posted_qty = $_POST['ggw_gift_qty'] ?? [];
         $gift_variation_map = $_POST['ggw_gift_variation_id'] ?? [];
 
