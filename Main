@@ -554,29 +554,40 @@ GGWCSS;
 (function(){
     var init=function(){
         var panel=document.querySelector('[data-ggw-gift-config]');
-        if(!panel){return;}
-
-        var layoutField=panel.querySelector('[name="gift_image_layout"]');
-        var shapeField=panel.querySelector('[name="gift_image_shape"]');
-        var minField=panel.querySelector('[name="gift_image_custom_min_width"]');
-        var ratioField=panel.querySelector('[name="gift_image_custom_aspect_ratio"]');
-        var maxField=panel.querySelector('[name="gift_image_custom_max_grid_width"]');
-        var fitField=panel.querySelector('[name="gift_image_custom_object_fit"]');
-        var customWrap=panel.querySelector('[data-ggw-custom-controls]');
-        var livePreview=panel.querySelector('[data-ggw-live-preview-grid]');
-        var previewMeta=panel.querySelector('[data-ggw-preview-meta]');
-        var customToggleHint=panel.querySelector('[data-ggw-custom-toggle-hint]');
-
         var presets={};
-        panel.querySelectorAll('option[data-ggw-preset]').forEach(function(opt){
-            presets[opt.value]={
-                min:parseInt(opt.getAttribute('data-min-width')||'120',10),
-                ratio:opt.getAttribute('data-aspect-ratio')||'1/1',
-                max:parseInt(opt.getAttribute('data-max-grid-width')||'560',10),
-                fit:opt.getAttribute('data-object-fit')||'cover',
-                label:opt.textContent||opt.value
-            };
-        });
+        var layoutField=null;
+        var shapeField=null;
+        var minField=null;
+        var ratioField=null;
+        var maxField=null;
+        var fitField=null;
+        var customWrap=null;
+        var livePreview=null;
+        var previewMeta=null;
+        var customToggleHint=null;
+
+        if(panel){
+            layoutField=panel.querySelector('[name="gift_image_layout"]');
+            shapeField=panel.querySelector('[name="gift_image_shape"]');
+            minField=panel.querySelector('[name="gift_image_custom_min_width"]');
+            ratioField=panel.querySelector('[name="gift_image_custom_aspect_ratio"]');
+            maxField=panel.querySelector('[name="gift_image_custom_max_grid_width"]');
+            fitField=panel.querySelector('[name="gift_image_custom_object_fit"]');
+            customWrap=panel.querySelector('[data-ggw-custom-controls]');
+            livePreview=panel.querySelector('[data-ggw-live-preview-grid]');
+            previewMeta=panel.querySelector('[data-ggw-preview-meta]');
+            customToggleHint=panel.querySelector('[data-ggw-custom-toggle-hint]');
+
+            panel.querySelectorAll('option[data-ggw-preset]').forEach(function(opt){
+                presets[opt.value]={
+                    min:parseInt(opt.getAttribute('data-min-width')||'120',10),
+                    ratio:opt.getAttribute('data-aspect-ratio')||'1/1',
+                    max:parseInt(opt.getAttribute('data-max-grid-width')||'560',10),
+                    fit:opt.getAttribute('data-object-fit')||'cover',
+                    label:opt.textContent||opt.value
+                };
+            });
+        }
 
         var clamp=function(v,min,max){
             v=parseInt(v||0,10);
@@ -663,23 +674,27 @@ GGWCSS;
             update();
         };
 
-        panel.querySelectorAll('[data-ggw-layout-chip]').forEach(function(chip){
-            chip.addEventListener('click',function(){
-                setLayoutValue(chip.getAttribute('data-layout'));
+        if(panel){
+            panel.querySelectorAll('[data-ggw-layout-chip]').forEach(function(chip){
+                chip.addEventListener('click',function(){
+                    setLayoutValue(chip.getAttribute('data-layout'));
+                });
             });
-        });
+        }
 
-        panel.querySelectorAll('[data-ggw-preset-preview]').forEach(function(card){
-            card.addEventListener('click',function(){
-                setLayoutValue(card.getAttribute('data-layout'));
-            });
-            card.addEventListener('keydown',function(e){
-                if(e.key==='Enter' || e.key===' '){
-                    e.preventDefault();
+        if(panel){
+            panel.querySelectorAll('[data-ggw-preset-preview]').forEach(function(card){
+                card.addEventListener('click',function(){
                     setLayoutValue(card.getAttribute('data-layout'));
-                }
+                });
+                card.addEventListener('keydown',function(e){
+                    if(e.key==='Enter' || e.key===' '){
+                        e.preventDefault();
+                        setLayoutValue(card.getAttribute('data-layout'));
+                    }
+                });
             });
-        });
+        }
 
         [layoutField,shapeField,minField,ratioField,maxField,fitField].forEach(function(el){
             if(!el){return;}
@@ -687,7 +702,9 @@ GGWCSS;
             el.addEventListener('change',update);
         });
 
-        update();
+        if(panel){
+            update();
+        }
 
         var modeField=document.querySelector('[name="gift_chooser_mode"]');
         var progressiveWrap=document.querySelector('[data-ggw-progressive-wrap]');
@@ -701,8 +718,22 @@ GGWCSS;
             var seen={};
             var giftField=document.querySelector('[name="gift_products_csv[]"]')||document.querySelector('[name="gift_products_csv"]');
             if(!giftField){return out;}
-            Array.prototype.slice.call(giftField.options||[]).forEach(function(opt){
-                if(!opt.selected){return;}
+
+            if(window.jQuery){
+                var jq=window.jQuery(giftField);
+                if(jq && typeof jq.selectWoo==='function'){
+                    var selectedData=jq.selectWoo('data')||[];
+                    selectedData.forEach(function(item){
+                        var id=parseInt(item&&item.id||'0',10);
+                        if(!id||seen[id]){return;}
+                        seen[id]=true;
+                        out.push({id:String(id),label:String(item.text||('Produkt #'+id)).trim()});
+                    });
+                }
+            }
+
+            Array.prototype.slice.call(giftField.selectedOptions||giftField.options||[]).forEach(function(opt){
+                if(!opt.selected && giftField.selectedOptions){return;}
                 var id=parseInt(opt.value||'0',10);
                 if(!id||seen[id]){return;}
                 seen[id]=true;
@@ -824,6 +855,9 @@ GGWCSS;
         if(giftField){
             giftField.addEventListener('change',syncSlideChoices);
             giftField.addEventListener('input',syncSlideChoices);
+            if(window.jQuery){
+                window.jQuery(giftField).on('select2:select select2:unselect',syncSlideChoices);
+            }
         }
         if(modeField){
             modeField.addEventListener('change',updateModeVisibility);
