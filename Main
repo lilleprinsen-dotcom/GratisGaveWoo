@@ -1652,6 +1652,30 @@ GGWJS;
 
         $gift_ids = array_values(array_filter($campaign['gift_products'], [__CLASS__, 'gift_product_is_available']));
         if (empty($gift_ids)) return;
+        $gift_lookup = array_fill_keys($gift_ids, true);
+        $chooser_mode = self::sanitize_gift_chooser_mode($campaign['gift_chooser_mode'] ?? 'classic');
+        $progressive_slides = [];
+        if ($chooser_mode === 'progressive') {
+            foreach ((array) ($campaign['progressive_slides'] ?? []) as $slide) {
+                if (!is_array($slide)) {
+                    continue;
+                }
+                $slide_ids = [];
+                foreach ((array) ($slide['gift_ids'] ?? []) as $candidate_id) {
+                    $candidate_id = absint($candidate_id);
+                    if (!$candidate_id || empty($gift_lookup[$candidate_id]) || in_array($candidate_id, $slide_ids, true)) {
+                        continue;
+                    }
+                    $slide_ids[] = $candidate_id;
+                }
+                if (!empty($slide_ids)) {
+                    $progressive_slides[] = ['gift_ids' => $slide_ids];
+                }
+            }
+            if (empty($progressive_slides)) {
+                $chooser_mode = 'classic';
+            }
+        }
 
         echo '<div class="ggw-box" style="margin:14px 0;padding:12px;border:1px solid #e5e7eb;border-radius:8px;background:#fafafa">';
         if (!empty($campaign['badge'])) {
@@ -1665,6 +1689,52 @@ GGWJS;
         // If require choice, render gift grid with quantities.
         if (!empty($campaign['require_choice']) && empty($campaign['auto_gift'])) {
             $choice_slots = max(1, intval($campaign['gifts_to_choose'] ?? 1));
+            if ($chooser_mode === 'progressive' && !empty($progressive_slides)) {
+                $step_count = min(count($progressive_slides), $choice_slots);
+                $gift_card_layout = self::get_gift_card_layout($campaign);
+                $desktop_width = max(320, min(680, intval($gift_card_layout['max_grid_width'] ?? 560)));
+                echo '<style>.ggw-progressive{max-width:min(100%,' . esc_attr($desktop_width) . 'px);margin:0 auto}.ggw-progressive-progress{text-align:center;font-size:13px;font-weight:600;margin-bottom:10px}.ggw-progressive-track{position:relative;overflow:hidden}.ggw-progressive-slide{position:absolute;left:0;top:0;width:100%;opacity:0;pointer-events:none;transform:translateX(18px);transition:transform .28s ease,opacity .28s ease}.ggw-progressive-slide.is-active{position:relative;opacity:1;pointer-events:auto;transform:translateX(0)}.ggw-progressive-cards{display:grid;gap:10px}.ggw-progressive-card{border:1px solid #d1d5db;border-radius:12px;padding:12px;background:#fff;cursor:pointer;transition:border-color .2s,box-shadow .2s}.ggw-progressive-card.is-selected{border-color:#111827;box-shadow:0 0 0 1px #111827 inset}.ggw-progressive-card:focus-visible{outline:2px solid #111827;outline-offset:2px}.ggw-progressive-row{display:flex;align-items:center;gap:10px}.ggw-progressive-media{width:72px;height:72px;flex:0 0 72px;border-radius:10px;overflow:hidden;background:#f3f4f6}.ggw-progressive-media img{width:100%;height:100%;object-fit:cover}.ggw-progressive-title{font-size:14px;font-weight:600}.ggw-progressive-var{display:none;margin-top:8px}.ggw-progressive-card.is-selected .ggw-progressive-var{display:block}.ggw-progressive-controls{display:flex;justify-content:space-between;gap:10px;margin-top:12px}.ggw-progressive-btn{min-height:44px;padding:10px 14px;border-radius:10px;border:1px solid #d1d5db;background:#fff;font-weight:600}.ggw-progressive-btn--next{background:#111827;color:#fff;border-color:#111827}.ggw-progressive-btn:disabled{opacity:.45}.ggw-progressive-error{min-height:18px;font-size:12px;color:#b91c1c;margin-top:8px}@media (min-width:768px){.ggw-progressive-progress{text-align:left}}</style>';
+                echo '<div class="ggw-progressive" data-ggw-progressive data-steps="' . esc_attr($step_count) . '">';
+                echo '<div class="ggw-progressive-progress" data-ggw-progressive-progress aria-live="polite"></div>';
+                echo '<div class="ggw-progressive-track">';
+                for ($step = 0; $step < $step_count; $step++) {
+                    $slide_ids = array_values(array_filter(array_map('absint', (array) ($progressive_slides[$step]['gift_ids'] ?? []))));
+                    if (empty($slide_ids)) continue;
+                    echo '<section class="ggw-progressive-slide' . ($step === 0 ? ' is-active' : '') . '" data-ggw-progressive-slide data-step="' . esc_attr($step) . '" role="group" aria-label="Gavevalg ' . esc_attr($step + 1) . '">';
+                    echo '<div class="ggw-progressive-cards" role="listbox">';
+                    foreach ($slide_ids as $gid) {
+                        $gp = wc_get_product($gid);
+                        if (!$gp) continue;
+                        $image_id = $gp->get_image_id();
+                        $image_html = $image_id ? wp_get_attachment_image($image_id, 'woocommerce_thumbnail', false, ['loading' => 'lazy', 'decoding' => 'async']) : wc_placeholder_img('woocommerce_thumbnail');
+                        echo '<article class="ggw-progressive-card" tabindex="0" role="option" aria-selected="false" data-ggw-card data-step="' . esc_attr($step) . '" data-gift-id="' . esc_attr($gid) . '">';
+                        echo '<div class="ggw-progressive-row"><span class="ggw-progressive-media">' . wp_kses_post($image_html) . '</span><span class="ggw-progressive-title">' . esc_html($gp->get_name()) . '</span></div>';
+                        if ($gp->is_type('variable')) {
+                            $variations = self::get_available_gift_variations($gid);
+                            if (!empty($variations)) {
+                                echo '<div class="ggw-progressive-var"><label for="ggw_step_var_' . esc_attr($step) . '_' . esc_attr($gid) . '" style="display:block;font-size:12px;margin-bottom:4px;">Velg variant</label><select id="ggw_step_var_' . esc_attr($step) . '_' . esc_attr($gid) . '" data-ggw-var><option value="">Velg variant</option>';
+                                foreach ($variations as $variation_row) {
+                                    echo '<option value="' . esc_attr($variation_row['id']) . '">' . esc_html($variation_row['label']) . '</option>';
+                                }
+                                echo '</select></div>';
+                            }
+                        }
+                        echo '</article>';
+                    }
+                    echo '</div></section>';
+                }
+                echo '</div><div class="ggw-progressive-controls"><button type="button" class="ggw-progressive-btn" data-ggw-back>Tilbake</button><button type="button" class="ggw-progressive-btn ggw-progressive-btn--next" data-ggw-next>Neste</button></div><div class="ggw-progressive-error" data-ggw-error aria-live="assertive"></div>';
+                foreach ($gift_ids as $gid) {
+                    echo '<input type="hidden" name="ggw_gift_qty[' . esc_attr($gid) . ']" value="0" data-ggw-hidden-qty data-gift-id="' . esc_attr($gid) . '">';
+                    echo '<input type="hidden" name="ggw_gift_variation_id[' . esc_attr($gid) . ']" value="" data-ggw-hidden-var data-gift-id="' . esc_attr($gid) . '">';
+                }
+                echo '</div>';
+                echo '<script>(function(){var root=document.querySelector("[data-ggw-progressive]");if(!root){return;}var slides=[].slice.call(root.querySelectorAll("[data-ggw-progressive-slide]"));var cards=[].slice.call(root.querySelectorAll("[data-ggw-card]"));if(!slides.length){return;}var back=root.querySelector("[data-ggw-back]");var next=root.querySelector("[data-ggw-next]");var progress=root.querySelector("[data-ggw-progressive-progress]");var error=root.querySelector("[data-ggw-error]");var qty=[].slice.call(root.querySelectorAll("[data-ggw-hidden-qty]"));var vars=[].slice.call(root.querySelectorAll("[data-ggw-hidden-var]"));var selected={};var current=0;var max=slides.length-1;var toInt=function(v){var n=parseInt(v,10);return isNaN(n)?0:n;};var getByStep=function(step){return cards.filter(function(c){return toInt(c.getAttribute("data-step"))===step;});};var setError=function(msg){if(error){error.textContent=msg||"";}};var syncHidden=function(){qty.forEach(function(i){i.value="0";});vars.forEach(function(i){i.value="";});Object.keys(selected).forEach(function(k){var s=selected[k];var q=root.querySelector("[data-ggw-hidden-qty][data-gift-id=\""+s.giftId+"\"]");if(q){q.value="1";}var v=root.querySelector("[data-ggw-hidden-var][data-gift-id=\""+s.giftId+"\"]");if(v){v.value=s.variationId?String(s.variationId):"";}});};var paint=function(){slides.forEach(function(slide,idx){slide.classList.toggle("is-active",idx===current);});cards.forEach(function(card){var step=toInt(card.getAttribute("data-step"));var gift=toInt(card.getAttribute("data-gift-id"));var picked=selected[step]&&selected[step].giftId===gift;card.classList.toggle("is-selected",!!picked);card.setAttribute("aria-selected",picked?"true":"false");});if(progress){progress.textContent="Gift "+(current+1)+" of "+slides.length;}if(back){back.disabled=current===0;}if(next){next.textContent=current===max?"Ferdig":"Neste";}var focusEl=slides[current].querySelector(".ggw-progressive-card.is-selected")||slides[current].querySelector(".ggw-progressive-card");if(focusEl){window.requestAnimationFrame(function(){focusEl.focus();});}syncHidden();};var validate=function(step){if(!selected[step]){return "Velg en gave før du går videre.";}var card=root.querySelector("[data-ggw-card][data-step=\""+step+"\"][data-gift-id=\""+selected[step].giftId+"\"]");if(!card){return "Velg en gyldig gave.";}var select=card.querySelector("[data-ggw-var]");if(select&&String(select.value||"")===""){return "Velg variant før du går videre.";}return "";};cards.forEach(function(card){var pick=function(){var step=toInt(card.getAttribute("data-step"));var gift=toInt(card.getAttribute("data-gift-id"));var select=card.querySelector("[data-ggw-var]");selected[step]={giftId:gift,variationId:select?toInt(select.value):0};setError("");paint();};card.addEventListener("click",pick);card.addEventListener("keydown",function(e){if(e.key==="Enter"||e.key===" "){e.preventDefault();pick();}if(e.key==="ArrowRight"&&current<max){e.preventDefault();current++;paint();}if(e.key==="ArrowLeft"&&current>0){e.preventDefault();current--;paint();}});var select=card.querySelector("[data-ggw-var]");if(select){select.addEventListener("click",function(e){e.stopPropagation();});select.addEventListener("change",function(){var step=toInt(card.getAttribute("data-step"));if(selected[step]&&selected[step].giftId===toInt(card.getAttribute("data-gift-id"))){selected[step].variationId=toInt(select.value);syncHidden();}});}});if(back){back.addEventListener("click",function(){if(current>0){current--;setError("");paint();}});}if(next){next.addEventListener("click",function(){var problem=validate(current);if(problem){setError(problem);return;}if(current<max){current++;setError("");paint();}});}paint();})();</script>';
+                echo '<input type="hidden" name="ggw_campaign_id" value="' . esc_attr($campaign['id']) . '">';
+                echo '<p style="font-size:12px;color:#6b7280;margin-top:6px;">Vi bekrefter gavevalget ditt i handlekurv og checkout.</p>';
+                echo '</div>';
+                return;
+            }
             echo '<p style="font-size:12px;color:#374151;margin:0 0 8px;">Velg totalt <strong>' . intval($choice_slots) . '</strong> gave(r). Trykk <strong>+</strong> for å legge til og <strong>−</strong> for å fjerne.</p>';
 
             $gift_card_layout = self::get_gift_card_layout($campaign);
