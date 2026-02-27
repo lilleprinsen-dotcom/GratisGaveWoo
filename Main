@@ -995,6 +995,79 @@ GGWJS;
         <?php
     }
 
+    private static function render_product_multiselect($field_name, $selected_ids, $required = false) {
+        $selected_ids = array_values(array_unique(array_filter(array_map('absint', (array) $selected_ids))));
+        ?>
+        <select
+            class="wc-product-search"
+            multiple="multiple"
+            style="width:420px;max-width:100%;"
+            name="<?php echo esc_attr($field_name); ?>[]"
+            data-placeholder="<?php echo esc_attr__('Søk etter produkter…', 'gratisgavewoo'); ?>"
+            data-action="woocommerce_json_search_products_and_variations"
+            <?php echo $required ? 'required' : ''; ?>
+        >
+            <?php foreach ($selected_ids as $product_id):
+                $product = wc_get_product($product_id);
+                if (!$product) {
+                    continue;
+                }
+                ?>
+                <option value="<?php echo esc_attr($product_id); ?>" selected="selected">
+                    <?php echo wp_kses_post($product->get_formatted_name()); ?>
+                </option>
+            <?php endforeach; ?>
+        </select>
+        <?php
+    }
+
+    private static function render_term_multiselect($field_name, $taxonomy, $selected_ids) {
+        $taxonomy = sanitize_key($taxonomy);
+        $selected_ids = array_values(array_unique(array_filter(array_map('absint', (array) $selected_ids))));
+        $terms = get_terms([
+            'taxonomy' => $taxonomy,
+            'hide_empty' => false,
+            'orderby' => 'name',
+            'order' => 'ASC',
+        ]);
+
+        if (is_wp_error($terms)) {
+            $terms = [];
+        }
+        ?>
+        <select class="wc-enhanced-select" multiple="multiple" style="width:420px;max-width:100%;" name="<?php echo esc_attr($field_name); ?>[]" data-placeholder="<?php echo esc_attr__('Velg…', 'gratisgavewoo'); ?>">
+            <?php foreach ($terms as $term): ?>
+                <option value="<?php echo esc_attr($term->term_id); ?>" <?php selected(in_array(intval($term->term_id), $selected_ids, true)); ?>>
+                    <?php echo esc_html($term->name); ?>
+                </option>
+            <?php endforeach; ?>
+        </select>
+        <?php
+    }
+
+    private static function render_gift_limits_fields($campaign) {
+        $gift_ids = array_values(array_unique(array_filter(array_map('absint', (array) ($campaign['gift_products'] ?? [])))));
+        $limits = is_array($campaign['gift_product_limits'] ?? null) ? $campaign['gift_product_limits'] : [];
+
+        if (empty($gift_ids)) {
+            echo '<p class="description">Velg gaveprodukter først for å sette per-produktgrense.</p>';
+            return;
+        }
+
+        echo '<div style="display:grid;gap:8px;max-width:520px;">';
+        foreach ($gift_ids as $gift_id) {
+            $product = wc_get_product($gift_id);
+            $label = $product ? $product->get_formatted_name() : ('#' . $gift_id);
+            $value = max(0, intval($limits[$gift_id] ?? 0));
+
+            echo '<label style="display:flex;align-items:center;justify-content:space-between;gap:12px;">';
+            echo '<span>' . wp_kses_post($label) . '</span>';
+            echo '<input type="number" min="0" step="1" name="gift_product_limits[' . esc_attr($gift_id) . ']" value="' . esc_attr($value) . '" style="width:90px;">';
+            echo '</label>';
+        }
+        echo '</div>';
+    }
+
     public static function handle_admin_post() {
         if (!is_admin() || !current_user_can('manage_woocommerce')) return;
         if (empty($_POST['ggw_action'])) return;
