@@ -714,7 +714,15 @@ GGWCSS;
         var form=modeField?modeField.closest('form'):null;
 
         var getGiftField=function(){
-            return document.querySelector('[name="gift_products_csv[]"]')||document.querySelector('[name="gift_products_csv"]');
+            var byName=document.getElementsByName('gift_products_csv[]');
+            if(byName && byName.length){
+                return byName[0];
+            }
+            var legacy=document.getElementsByName('gift_products_csv');
+            if(legacy && legacy.length){
+                return legacy[0];
+            }
+            return document.querySelector('[data-ggw-product-source="1"]');
         };
 
         var getGiftPool=function(){
@@ -749,6 +757,18 @@ GGWCSS;
                 var label=String(rawLabel||'').trim();
                 out.push({id:id,label:label||('Produkt #'+id)});
             };
+
+            var preload=giftField.getAttribute('data-ggw-selected-products')||'';
+            if(preload){
+                try{
+                    var parsed=JSON.parse(preload);
+                    if(Array.isArray(parsed)){
+                        parsed.forEach(function(item){
+                            addGift(item&&item.id,item&&item.label);
+                        });
+                    }
+                }catch(err){}
+            }
 
             if(window.jQuery){
                 var jq=window.jQuery(giftField);
@@ -1210,12 +1230,25 @@ GGWJS;
 
     private static function render_product_multiselect($field_name, $selected_ids, $required = false) {
         $selected_ids = array_values(array_unique(array_filter(array_map('absint', (array) $selected_ids))));
+        $selected_payload = [];
+        foreach ($selected_ids as $product_id) {
+            $product = wc_get_product($product_id);
+            if (!$product) {
+                continue;
+            }
+            $selected_payload[] = [
+                'id' => $product_id,
+                'label' => wp_strip_all_tags($product->get_formatted_name()),
+            ];
+        }
         ?>
         <select
             class="wc-product-search"
             multiple="multiple"
             style="width:420px;max-width:100%;"
             name="<?php echo esc_attr($field_name); ?>[]"
+            data-ggw-product-source="1"
+            data-ggw-selected-products="<?php echo esc_attr(wp_json_encode($selected_payload)); ?>"
             data-placeholder="<?php echo esc_attr__('Søk etter produkter…', 'gratisgavewoo'); ?>"
             data-action="woocommerce_json_search_products_and_variations"
             <?php echo $required ? 'required' : ''; ?>
