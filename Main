@@ -526,7 +526,9 @@ final class GGW_Free_Gift_Campaigns {
 .ggw-gift-preview-title{margin-top:6px;font-size:12px;line-height:1.35;color:#111827;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:32px}
 .ggw-gift-preview-help{font-size:12px;color:#4b5563;margin-top:8px}
 .ggw-gift-preset-preview-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;max-width:980px}
-.ggw-gift-preset-preview{border:1px solid #d1d5db;border-radius:10px;padding:10px;background:#fff}
+.ggw-gift-preset-preview{border:1px solid #d1d5db;border-radius:10px;padding:10px;background:#fff;cursor:pointer;transition:border-color .15s ease,box-shadow .15s ease,transform .15s ease}
+.ggw-gift-preset-preview:hover{border-color:#93c5fd;transform:translateY(-1px)}
+.ggw-gift-preset-preview:focus-visible{outline:2px solid #2563eb;outline-offset:1px}
 .ggw-gift-preset-preview.is-active{border-color:#2563eb;box-shadow:0 0 0 1px #2563eb inset;background:#eff6ff}
 .ggw-gift-preset-preview-head{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:12px;margin-bottom:8px;color:#111827}
 .ggw-gift-preset-preview-note{color:#4b5563;font-size:11px;line-height:1.4}
@@ -561,7 +563,7 @@ GGWCSS;
         var maxField=panel.querySelector('[name="gift_image_custom_max_grid_width"]');
         var fitField=panel.querySelector('[name="gift_image_custom_object_fit"]');
         var customWrap=panel.querySelector('[data-ggw-custom-controls]');
-        var livePreview=panel.querySelector('[data-ggw-preview-grid]');
+        var livePreview=panel.querySelector('[data-ggw-live-preview-grid]');
         var previewMeta=panel.querySelector('[data-ggw-preview-meta]');
         var customToggleHint=panel.querySelector('[data-ggw-custom-toggle-hint]');
 
@@ -610,7 +612,9 @@ GGWCSS;
             var active=layoutField?layoutField.value:'compact';
             list.querySelectorAll('[data-ggw-preset-preview]').forEach(function(item){
                 var key=item.getAttribute('data-layout');
-                item.classList.toggle('is-active',key===active);
+                var isActive=key===active;
+                item.classList.toggle('is-active',isActive);
+                item.setAttribute('aria-pressed',isActive?'true':'false');
                 var grid=item.querySelector('[data-ggw-preview-grid]');
                 applyLayout(grid,presets[key]||presets.compact,shape);
             });
@@ -652,12 +656,28 @@ GGWCSS;
             if(customToggleHint){customToggleHint.style.display=isCustom?'none':'inline';}
         };
 
+        var setLayoutValue=function(key){
+            if(!layoutField||!key){return;}
+            layoutField.value=key;
+            layoutField.dispatchEvent(new Event('change',{bubbles:true}));
+            update();
+        };
+
         panel.querySelectorAll('[data-ggw-layout-chip]').forEach(function(chip){
             chip.addEventListener('click',function(){
-                var key=chip.getAttribute('data-layout');
-                if(!layoutField||!key){return;}
-                layoutField.value=key;
-                layoutField.dispatchEvent(new Event('change',{bubbles:true}));
+                setLayoutValue(chip.getAttribute('data-layout'));
+            });
+        });
+
+        panel.querySelectorAll('[data-ggw-preset-preview]').forEach(function(card){
+            card.addEventListener('click',function(){
+                setLayoutValue(card.getAttribute('data-layout'));
+            });
+            card.addEventListener('keydown',function(e){
+                if(e.key==='Enter' || e.key===' '){
+                    e.preventDefault();
+                    setLayoutValue(card.getAttribute('data-layout'));
+                }
             });
         });
 
@@ -1020,7 +1040,7 @@ GGWJS;
                                 <strong>Live forhåndsvisning av valgt layout</strong>
                                 <span class="ggw-gift-preview-meta" data-ggw-preview-meta></span>
                             </div>
-                            <div class="ggw-gift-preview-grid" data-ggw-preview-grid style="margin-top:8px;">
+                            <div class="ggw-gift-preview-grid" data-ggw-preview-grid data-ggw-live-preview-grid style="margin-top:8px;">
                                 <div class="ggw-gift-preview-card"><span class="ggw-gift-preview-media" data-ggw-preview-media><img data-ggw-preview-image src="<?php echo esc_url(wc_placeholder_img_src('woocommerce_thumbnail')); ?>" alt="Eksempel gave"></span><span class="ggw-gift-preview-title">Kattnakken eksempelgave</span></div>
                                 <div class="ggw-gift-preview-card"><span class="ggw-gift-preview-media" data-ggw-preview-media><img data-ggw-preview-image src="<?php echo esc_url(wc_placeholder_img_src('woocommerce_thumbnail')); ?>" alt="Eksempel gave"></span><span class="ggw-gift-preview-title">Ullsokk med mønster</span></div>
                                 <div class="ggw-gift-preview-card"><span class="ggw-gift-preview-media" data-ggw-preview-media><img data-ggw-preview-image src="<?php echo esc_url(wc_placeholder_img_src('woocommerce_thumbnail')); ?>" alt="Eksempel gave"></span><span class="ggw-gift-preview-title">Reparasjonslapper til regntøy</span></div>
@@ -1029,7 +1049,7 @@ GGWJS;
                         </div>
                         <div class="ggw-gift-preset-preview-list" data-ggw-preset-preview-list>
                             <?php foreach ($gift_layout_presets as $layout_key => $layout_preset): ?>
-                                <div class="ggw-gift-preset-preview" data-ggw-preset-preview data-layout="<?php echo esc_attr($layout_key); ?>">
+                                <div class="ggw-gift-preset-preview" data-ggw-preset-preview data-layout="<?php echo esc_attr($layout_key); ?>" role="button" tabindex="0" aria-pressed="false">
                                     <div class="ggw-gift-preset-preview-head">
                                         <strong><?php echo esc_html($layout_preset['label']); ?></strong>
                                         <span><?php echo esc_html($layout_preset['aspect_ratio']); ?></span>
