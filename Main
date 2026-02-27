@@ -536,11 +536,10 @@ final class GGW_Free_Gift_Campaigns {
 .ggw-progressive-actions{display:flex;gap:6px;flex-wrap:wrap}
 .ggw-progressive-add{margin-top:8px}
 .ggw-progressive-empty{padding:10px;border:1px dashed #d1d5db;border-radius:8px;background:#f9fafb;color:#4b5563}
-.ggw-progressive-select{min-width:560px;width:100%;max-width:100%}
-.ggw-progressive-wrap .select2-container{min-width:560px!important;width:100%!important;max-width:100%}
-.ggw-progressive-wrap .select2-selection--multiple{min-height:40px}
-.ggw-progressive-wrap .select2-search--inline{float:none!important;display:block}
-.ggw-progressive-wrap .select2-search--inline .select2-search__field{width:100%!important;min-width:260px;margin-top:6px!important}
+.ggw-progressive-choice-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px}
+.ggw-progressive-choice{display:flex;align-items:flex-start;gap:8px;border:1px solid #d1d5db;border-radius:8px;padding:7px 9px;background:#fff}
+.ggw-progressive-choice input{margin-top:2px}
+.ggw-progressive-choice span{font-size:12px;line-height:1.35}
 @media (max-width:782px){
   .ggw-progressive-table thead{display:none}
   .ggw-progressive-table tr{display:block;border:1px solid #e5e7eb;border-radius:8px;padding:8px;margin-bottom:8px}
@@ -692,58 +691,57 @@ GGWCSS;
             return out;
         };
 
-        var enhanceSelect=function(el){
-            if(!el||typeof window.jQuery==='undefined'){return;}
-            var $el=window.jQuery(el);
-            var hasSelectWoo=typeof $el.selectWoo==='function';
-            var hasSelect2=typeof $el.select2==='function';
-
-            if($el.hasClass('select2-hidden-accessible')){
-                if(hasSelectWoo){
-                    $el.selectWoo('destroy');
-                }else if(hasSelect2){
-                    $el.select2('destroy');
-                }
-            }
-
-            if(hasSelectWoo){
-                $el.selectWoo({width:'100%'});
-            }else if(hasSelect2){
-                $el.select2({width:'100%'});
-            }else{
-                $el.filter(':not(.enhanced)').addClass('enhanced').trigger('wc-enhanced-select-init');
-            }
-
-            $el.trigger('change');
-        };
-
         var renumber=function(){
             if(!progressiveBody){return;}
             progressiveBody.querySelectorAll('[data-ggw-slide-row]').forEach(function(row,index){
                 row.setAttribute('data-index',String(index));
                 var label=row.querySelector('[data-ggw-slide-label]');
                 if(label){label.textContent='Slide '+(index+1);}
-                row.querySelectorAll('[data-ggw-field="gift_ids"]').forEach(function(sel){
-                    sel.name='progressive_slides['+index+'][gift_ids][]';
+                row.querySelectorAll('[data-ggw-field="gift_ids"]').forEach(function(input){
+                    input.name='progressive_slides['+index+'][gift_ids][]';
                 });
             });
         };
 
-        var syncSlideOptions=function(){
+        var syncSlideChoices=function(){
             if(!progressiveBody){return;}
             var pool=getGiftPool();
-            progressiveBody.querySelectorAll('[data-ggw-field="gift_ids"]').forEach(function(sel){
-                var selected=Array.prototype.slice.call(sel.selectedOptions||[]).map(function(opt){return opt.value;});
-                sel.innerHTML='';
-                pool.forEach(function(item){
-                    var opt=document.createElement('option');
-                    opt.value=item.id;
-                    opt.textContent=item.label;
-                    if(selected.indexOf(item.id)!==-1){opt.selected=true;}
-                    sel.appendChild(opt);
+            progressiveBody.querySelectorAll('[data-ggw-slide-choices]').forEach(function(container){
+                var selectedMap={};
+                container.querySelectorAll('[data-ggw-field="gift_ids"]:checked').forEach(function(input){
+                    selectedMap[input.value]=true;
                 });
-                enhanceSelect(sel);
+                container.innerHTML='';
+                if(!pool.length){
+                    container.innerHTML='<p class="ggw-progressive-empty">Velg gaveprodukter over for å tilordne hva kunden kan se i hver slide.</p>';
+                    return;
+                }
+                var frag=document.createDocumentFragment();
+                pool.forEach(function(item){
+                    var parentRow=container.closest('[data-ggw-slide-row]');
+                    var rowIndex=parentRow?parentRow.getAttribute('data-index'):'0';
+                    var id='ggw-slide-'+rowIndex+'-gift-'+item.id;
+                    var choice=document.createElement('label');
+                    choice.className='ggw-progressive-choice';
+
+                    var input=document.createElement('input');
+                    input.type='checkbox';
+                    input.setAttribute('data-ggw-field','gift_ids');
+                    input.value=item.id;
+                    input.name='';
+                    input.checked=!!selectedMap[item.id];
+                    input.id=id;
+
+                    var text=document.createElement('span');
+                    text.textContent=item.label;
+
+                    choice.appendChild(input);
+                    choice.appendChild(text);
+                    frag.appendChild(choice);
+                });
+                container.appendChild(frag);
             });
+            renumber();
         };
 
         var updateModeVisibility=function(){
@@ -760,17 +758,13 @@ GGWCSS;
             var row=temp.querySelector('[data-ggw-slide-row]');
             if(!row){return;}
             progressiveBody.appendChild(row);
-            renumber();
-            syncSlideOptions();
+            syncSlideChoices();
             if(Array.isArray(selectedIds)&&selectedIds.length){
-                var sel=row.querySelector('[data-ggw-field="gift_ids"]');
-                if(sel){
-                    Array.prototype.slice.call(sel.options||[]).forEach(function(opt){
-                        opt.selected=selectedIds.indexOf(opt.value)!==-1;
-                    });
-                    enhanceSelect(sel);
-                }
+                row.querySelectorAll('[data-ggw-field="gift_ids"]').forEach(function(input){
+                    input.checked=selectedIds.indexOf(input.value)!==-1;
+                });
             }
+            renumber();
         };
 
         if(addSlideBtn){
@@ -808,8 +802,8 @@ GGWCSS;
 
         var giftField=document.querySelector('[name="gift_products_csv[]"]')||document.querySelector('[name="gift_products_csv"]');
         if(giftField){
-            giftField.addEventListener('change',syncSlideOptions);
-            giftField.addEventListener('input',syncSlideOptions);
+            giftField.addEventListener('change',syncSlideChoices);
+            giftField.addEventListener('input',syncSlideChoices);
         }
         if(modeField){
             modeField.addEventListener('change',updateModeVisibility);
@@ -821,7 +815,7 @@ GGWCSS;
 
         updateModeVisibility();
         renumber();
-        syncSlideOptions();
+        syncSlideChoices();
     };
 
     if(document.readyState==='loading'){
@@ -916,12 +910,15 @@ GGWJS;
                                                 <tr data-ggw-slide-row data-index="<?php echo esc_attr(intval($slide_index)); ?>">
                                                     <td><strong data-ggw-slide-label><?php echo esc_html('Slide ' . (intval($slide_index) + 1)); ?></strong></td>
                                                     <td>
-                                                        <select class="wc-product-search ggw-progressive-select" multiple="multiple" data-ggw-field="gift_ids" name="progressive_slides[<?php echo esc_attr(intval($slide_index)); ?>][gift_ids][]" data-placeholder="Velg gaveprodukter" data-action="woocommerce_json_search_products_and_variations" data-exclude="<?php echo esc_attr(implode(',', array_map('intval', $editing['trigger_products'] ?? []))); ?>">
-                                                            <?php foreach ((array) ($slide['gift_ids'] ?? []) as $gift_id): ?>
+                                                        <div class="ggw-progressive-choice-grid" data-ggw-slide-choices>
+                                                            <?php foreach ((array) ($editing['gift_products'] ?? []) as $gift_id): ?>
                                                                 <?php $gift_product = wc_get_product($gift_id); if (!$gift_product) { continue; } ?>
-                                                                <option value="<?php echo esc_attr($gift_id); ?>" selected="selected"><?php echo wp_kses_post($gift_product->get_formatted_name()); ?></option>
+                                                                <label class="ggw-progressive-choice">
+                                                                    <input type="checkbox" data-ggw-field="gift_ids" name="progressive_slides[<?php echo esc_attr(intval($slide_index)); ?>][gift_ids][]" value="<?php echo esc_attr($gift_id); ?>" <?php checked(in_array($gift_id, (array) ($slide['gift_ids'] ?? []), true)); ?>>
+                                                                    <span><?php echo wp_kses_post($gift_product->get_formatted_name()); ?></span>
+                                                                </label>
                                                             <?php endforeach; ?>
-                                                        </select>
+                                                        </div>
                                                     </td>
                                                     <td>
                                                         <div class="ggw-progressive-actions">
@@ -936,7 +933,9 @@ GGWJS;
                                             <tr data-ggw-slide-row data-index="0">
                                                 <td><strong data-ggw-slide-label>Slide 1</strong></td>
                                                 <td>
-                                                    <select class="wc-product-search ggw-progressive-select" multiple="multiple" data-ggw-field="gift_ids" name="progressive_slides[0][gift_ids][]" data-placeholder="Velg gaveprodukter" data-action="woocommerce_json_search_products_and_variations" data-exclude="<?php echo esc_attr(implode(',', array_map('intval', $editing['trigger_products'] ?? []))); ?>"></select>
+                                                    <div class="ggw-progressive-choice-grid" data-ggw-slide-choices>
+                                                        <p class="ggw-progressive-empty">Velg gaveprodukter over for å tilordne hva kunden kan se i hver slide.</p>
+                                                    </div>
                                                 </td>
                                                 <td>
                                                     <div class="ggw-progressive-actions">
@@ -950,12 +949,14 @@ GGWJS;
                                     </tbody>
                                 </table>
                                 <button type="button" class="button ggw-progressive-add" data-ggw-progressive-add>+ Legg til slide</button>
-                                <p class="description">Hver slide må ha minst én gave fra kampanjens gaveprodukter.</p>
+                                <p class="description">Marker gavene som skal vises i hver slide. Bare produkter valgt i «Gaveprodukter kunden kan få» kan brukes her, og hver slide må ha minst ett valg.</p>
                                 <script type="text/template" data-ggw-progressive-template>
                                     <tr data-ggw-slide-row data-index="__index__">
                                         <td><strong data-ggw-slide-label>Slide __index__</strong></td>
                                         <td>
-                                            <select class="wc-product-search ggw-progressive-select" multiple="multiple" data-ggw-field="gift_ids" name="progressive_slides[__index__][gift_ids][]" data-placeholder="Velg gaveprodukter" data-action="woocommerce_json_search_products_and_variations"></select>
+                                            <div class="ggw-progressive-choice-grid" data-ggw-slide-choices>
+                                                <p class="ggw-progressive-empty">Velg gaveprodukter over for å tilordne hva kunden kan se i hver slide.</p>
+                                            </div>
                                         </td>
                                         <td>
                                             <div class="ggw-progressive-actions">
