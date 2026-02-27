@@ -145,6 +145,8 @@ final class GGW_Free_Gift_Campaigns {
             'gift_products' => [],
             'gift_product_limits' => [],
             'gifts_to_choose' => 1,
+            'gift_chooser_mode' => 'classic',
+            'progressive_slides' => [],
             'max_gifts_per_order' => 1,
             'max_per_customer' => 0,
             'require_choice' => 1,
@@ -185,6 +187,11 @@ final class GGW_Free_Gift_Campaigns {
         $c['priority'] = intval($c['priority']);
         $c['min_qty'] = max(1, intval($c['min_qty']));
         $c['gifts_to_choose'] = max(1, intval($c['gifts_to_choose']));
+        $c['gift_chooser_mode'] = self::sanitize_gift_chooser_mode($c['gift_chooser_mode'] ?? 'classic');
+        $c['progressive_slides'] = self::normalize_progressive_slides($c['progressive_slides'] ?? [], $c['gift_products']);
+        if ($c['gift_chooser_mode'] === 'progressive' && empty($c['progressive_slides'])) {
+            $c['gift_chooser_mode'] = 'classic';
+        }
         $c['max_gifts_per_order'] = max(1, intval($c['max_gifts_per_order']));
         $c['max_per_customer'] = max(0, intval($c['max_per_customer']));
         $c['min_subtotal'] = max(0, floatval($c['min_subtotal']));
@@ -197,6 +204,89 @@ final class GGW_Free_Gift_Campaigns {
         $c['gift_image_custom_object_fit'] = self::sanitize_gift_image_object_fit($c['gift_image_custom_object_fit'] ?? 'cover');
 
         return $c;
+    }
+
+    private static function sanitize_gift_chooser_mode($mode) {
+        $allowed = ['classic', 'progressive'];
+        $mode = sanitize_key($mode);
+        return in_array($mode, $allowed, true) ? $mode : 'classic';
+    }
+
+    private static function normalize_progressive_slides($slides, $gift_pool_ids) {
+        if (is_string($slides)) {
+            $decoded = json_decode(wp_unslash($slides), true);
+            $slides = is_array($decoded) ? $decoded : [];
+        }
+        if (!is_array($slides)) {
+            return [];
+        }
+
+        $allowed_ids = array_fill_keys(array_values(array_filter(array_map('absint', (array) $gift_pool_ids))), true);
+        if (empty($allowed_ids)) {
+            return [];
+        }
+
+        $normalized = [];
+        foreach ($slides as $slide) {
+            if (!is_array($slide)) {
+                continue;
+            }
+
+            $raw_ids = $slide['gift_ids'] ?? ($slide['gift_products'] ?? []);
+            if (!is_array($raw_ids)) {
+                $raw_ids = preg_split('/[\s,]+/', sanitize_text_field((string) $raw_ids));
+            }
+
+            $ids = [];
+            foreach ((array) $raw_ids as $id) {
+                $id = absint($id);
+                if (!$id || empty($allowed_ids[$id]) || in_array($id, $ids, true)) {
+                    continue;
+                }
+                $ids[] = $id;
+            }
+            if (empty($ids)) {
+                continue;
+            }
+
+            $normalized_slide = ['gift_ids' => $ids];
+            if (isset($slide['meta']) && is_array($slide['meta'])) {
+                $meta = [];
+                foreach ($slide['meta'] as $meta_key => $meta_value) {
+                    $meta_key = sanitize_key($meta_key);
+                    if ($meta_key === '') {
+                        continue;
+                    }
+                    if (is_scalar($meta_value)) {
+                        $meta[$meta_key] = sanitize_text_field((string) $meta_value);
+                    }
+                }
+                if (!empty($meta)) {
+                    $normalized_slide['meta'] = $meta;
+                }
+            }
+
+            $normalized[] = $normalized_slide;
+        }
+
+        return $normalized;
+    }
+
+    private static function parse_progressive_slides_post($raw) {
+        if (is_array($raw)) {
+            return $raw;
+        }
+        if (!is_string($raw) || $raw === '') {
+            return [];
+        }
+
+        $raw = wp_unslash($raw);
+        $decoded = json_decode($raw, true);
+        if (is_array($decoded)) {
+            return $decoded;
+        }
+
+        return [];
     }
 
     private static function get_gift_image_layout_presets() {
@@ -654,6 +744,8 @@ GGWJS;
 
         if ($action === 'save_campaign') {
             $campaign_id = sanitize_text_field(wp_unslash($_POST['campaign_id'] ?? ''));
+            $posted_chooser_mode = self::sanitize_gift_chooser_mode(wp_unslash($_POST['gift_chooser_mode'] ?? 'classic'));
+            $posted_progressive_slides = self::parse_progressive_slides_post($_POST['progressive_slides'] ?? []);
             $new = self::normalize_campaign([
                 'id' => wp_generate_uuid4(),
                 'title' => sanitize_text_field(wp_unslash($_POST['title'] ?? '')),
@@ -670,6 +762,8 @@ GGWJS;
                 'gift_products' => self::csv_to_ids($_POST['gift_products_csv'] ?? ''),
                 'gift_product_limits' => array_map('intval', (array) ($_POST['gift_product_limits'] ?? [])),
                 'gifts_to_choose' => intval($_POST['gifts_to_choose'] ?? 1),
+                'gift_chooser_mode' => $posted_chooser_mode,
+                'progressive_slides' => $posted_progressive_slides,
                 'max_gifts_per_order' => intval($_POST['max_gifts_per_order'] ?? 1),
                 'max_per_customer' => intval($_POST['max_per_customer'] ?? 0),
                 'require_choice' => !empty($_POST['require_choice']),
@@ -689,6 +783,10 @@ GGWJS;
             if (empty($new['title']) || empty($new['gift_products'])) {
                 add_action('admin_notices', function(){ echo '<div class="notice notice-error"><p>Tittel og gaveprodukter er påkrevd.</p></div>'; });
                 return;
+            }
+
+            if ($posted_chooser_mode === 'progressive' && $new['gift_chooser_mode'] !== 'progressive') {
+                add_action('admin_notices', function(){ echo '<div class="notice notice-warning"><p>Progressiv gavemodus ble deaktivert fordi ingen gyldige slides var definert. Kampanjen ble lagret i klassisk modus.</p></div>'; });
             }
 
             $was_updated = false;
