@@ -1294,6 +1294,38 @@ GGWJS;
         return true;
     }
 
+    private static function campaign_allowed_gift_ids_for_slot($campaign, $slot_index) {
+        $slot_index = max(0, intval($slot_index));
+        $gift_ids = array_values(array_unique(array_map('absint', (array) ($campaign['gift_products'] ?? []))));
+        if (empty($gift_ids)) {
+            return [];
+        }
+
+        $chooser_mode = self::sanitize_gift_chooser_mode($campaign['gift_chooser_mode'] ?? 'classic');
+        if ($chooser_mode !== 'progressive') {
+            return $gift_ids;
+        }
+
+        $slides = array_values((array) ($campaign['progressive_slides'] ?? []));
+        if (empty($slides)) {
+            return $gift_ids;
+        }
+
+        $slide_index = $slot_index;
+        if (!isset($slides[$slide_index])) {
+            $slide_index = $slide_index % count($slides);
+        }
+        $slide_ids = array_values(array_unique(array_map('absint', (array) ($slides[$slide_index]['gift_ids'] ?? []))));
+        if (empty($slide_ids)) {
+            return [];
+        }
+
+        $gift_lookup = array_fill_keys($gift_ids, true);
+        return array_values(array_filter($slide_ids, function($gift_id) use ($gift_lookup) {
+            return !empty($gift_lookup[$gift_id]);
+        }));
+    }
+
     private static function get_variation_attributes_for_cart($gift_variation_id) {
         $gift_variation_id = absint($gift_variation_id);
         if (!$gift_variation_id) return [];
@@ -1316,11 +1348,11 @@ GGWJS;
         return null;
     }
 
-    private static function find_swap_choice_for_gift($campaign, $current_parent_id, $current_variation_id = 0) {
+    private static function find_swap_choice_for_gift($campaign, $current_parent_id, $current_variation_id = 0, $slot_index = null) {
         $current_parent_id = absint($current_parent_id);
         $current_variation_id = absint($current_variation_id);
 
-        $gift_ids = array_values(array_unique(array_map('absint', $campaign['gift_products'] ?? [])));
+        $gift_ids = array_values(array_unique(array_map('absint', self::campaign_allowed_gift_ids_for_slot($campaign, $slot_index === null ? 0 : $slot_index))));
         if (empty($gift_ids)) return null;
 
         $start_index = 0;
@@ -1361,7 +1393,7 @@ GGWJS;
         return null;
     }
 
-    private static function update_trigger_item_selection_after_swap($cart, $campaign_id, $old_parent_id, $old_variation_id, $new_parent_id, $new_variation_id) {
+    private static function update_trigger_item_selection_after_swap($cart, $campaign_id, $old_parent_id, $old_variation_id, $new_parent_id, $new_variation_id, $slot_index = null) {
         if (!$cart || $cart->is_empty()) return;
 
         $campaign_id = sanitize_text_field((string) $campaign_id);
@@ -1370,6 +1402,9 @@ GGWJS;
             'gift_parent_id' => absint($new_parent_id),
             'gift_variation_id' => absint($new_variation_id),
         ];
+        if ($slot_index !== null) {
+            $new_entry['slot_index'] = max(0, intval($slot_index));
+        }
         $updated = false;
 
         foreach ($cart->cart_contents as $item_key => $item) {
@@ -1382,7 +1417,9 @@ GGWJS;
             $replaced_here = false;
             foreach ($selected as $idx => $selection) {
                 $selection_key = absint($selection['gift_parent_id'] ?? 0) . ':' . absint($selection['gift_variation_id'] ?? 0);
+                $selection_slot = isset($selection['slot_index']) ? max(0, intval($selection['slot_index'])) : null;
                 if ($selection_key !== $old_key) continue;
+                if ($slot_index !== null && $selection_slot !== max(0, intval($slot_index))) continue;
                 $selected[$idx] = $new_entry;
                 $replaced_here = true;
                 $updated = true;
@@ -1407,12 +1444,12 @@ GGWJS;
     }
 
 
-    private static function get_available_swap_choices_for_gift($campaign, $current_parent_id, $current_variation_id = 0, $cart = null, $exclude_cart_item_key = '') {
+    private static function get_available_swap_choices_for_gift($campaign, $current_parent_id, $current_variation_id = 0, $cart = null, $exclude_cart_item_key = '', $slot_index = null) {
         $current_parent_id = absint($current_parent_id);
         $current_variation_id = absint($current_variation_id);
         $exclude_cart_item_key = sanitize_text_field((string) $exclude_cart_item_key);
 
-        $gift_ids = array_values(array_unique(array_map('absint', $campaign['gift_products'] ?? [])));
+        $gift_ids = array_values(array_unique(array_map('absint', self::campaign_allowed_gift_ids_for_slot($campaign, $slot_index === null ? 0 : $slot_index))));
         if (empty($gift_ids)) return [];
 
         $campaign_id = sanitize_text_field($campaign['id'] ?? '');
@@ -1428,8 +1465,12 @@ GGWJS;
             }
         }
 
+        $slot_allowed = self::campaign_allowed_gift_ids_for_slot($campaign, $slot_index === null ? 0 : $slot_index);
+        $slot_lookup = array_fill_keys(array_values(array_filter(array_map('absint', $slot_allowed))), true);
+
         $choices = [];
         foreach ($gift_ids as $candidate_parent_id) {
+            if ($slot_index !== null && empty($slot_lookup[$candidate_parent_id])) continue;
             if (!$candidate_parent_id) continue;
             $candidate_parent = wc_get_product($candidate_parent_id);
             if (!$candidate_parent) continue;
@@ -1547,6 +1588,7 @@ GGWJS;
 
             $current_parent_id = absint($gift_item['product_id'] ?? 0);
             $current_variation_id = absint($gift_item['variation_id'] ?? 0);
+            $slot_index = isset($gift_item['_ggw_slot_index']) ? max(0, intval($gift_item['_ggw_slot_index'])) : null;
 
             $requested_parent_id = absint($_GET['ggw_target_parent_id'] ?? 0);
             $requested_variation_id = absint($_GET['ggw_target_variation_id'] ?? 0);
@@ -1555,7 +1597,7 @@ GGWJS;
                 $new_parent_id = $requested_parent_id;
                 $new_variation_id = $requested_variation_id;
             } else {
-                $replacement = self::find_swap_choice_for_gift($campaign, $current_parent_id, $current_variation_id);
+                $replacement = self::find_swap_choice_for_gift($campaign, $current_parent_id, $current_variation_id, $slot_index);
                 if (!$replacement) {
                     wc_add_notice(__('Ingen andre tilgjengelige gavevalg akkurat nå.', 'ggw'), 'notice');
                     wp_safe_redirect(wc_get_cart_url());
@@ -1570,7 +1612,7 @@ GGWJS;
                 wp_safe_redirect(wc_get_cart_url());
                 exit;
             }
-            $available_choices = self::get_available_swap_choices_for_gift($campaign, $current_parent_id, $current_variation_id, $cart, $gift_key);
+            $available_choices = self::get_available_swap_choices_for_gift($campaign, $current_parent_id, $current_variation_id, $cart, $gift_key, $slot_index);
             $choice_allowed = false;
             foreach ($available_choices as $choice) {
                 if (absint($choice['gift_parent_id'] ?? 0) !== $new_parent_id) {
@@ -1604,7 +1646,8 @@ GGWJS;
                 $campaign_id,
                 sanitize_text_field($gift_item['_ggw_trigger_key'] ?? ''),
                 absint($gift_item['_ggw_trigger_product_id'] ?? 0),
-                sanitize_text_field($gift_item['_ggw_label'] ?? 'Gratis gave')
+                sanitize_text_field($gift_item['_ggw_label'] ?? 'Gratis gave'),
+                $slot_index
             );
 
             $new_key = $cart->add_to_cart($new_parent_id, 1, $new_variation_id, $variation_attributes, $add_data);
@@ -1620,7 +1663,7 @@ GGWJS;
             }
             $cart->set_quantity($new_key, 1, false);
 
-            self::update_trigger_item_selection_after_swap($cart, $campaign_id, $current_parent_id, $current_variation_id, $new_parent_id, $new_variation_id);
+            self::update_trigger_item_selection_after_swap($cart, $campaign_id, $current_parent_id, $current_variation_id, $new_parent_id, $new_variation_id, $slot_index);
             $cart->remove_cart_item($gift_key);
             $cart->calculate_totals();
 
@@ -1983,7 +2026,8 @@ GGWJS;
                 return null;
             }
 
-            if (!self::validate_gift_choice($campaign, $gift_id, $selected_variation)) {
+            $allowed_step_gifts = self::campaign_allowed_gift_ids_for_slot($campaign, $step);
+            if (!in_array($gift_id, $allowed_step_gifts, true) || !self::validate_gift_choice($campaign, $gift_id, $selected_variation)) {
                 $error = sprintf(__('Valget i steg %d er ikke tilgjengelig nå. Velg en annen gave.', 'ggw'), $step + 1);
                 return null;
             }
@@ -1997,6 +2041,7 @@ GGWJS;
             $selected_gifts[] = [
                 'gift_parent_id' => $gift_id,
                 'gift_variation_id' => $selected_variation,
+                'slot_index' => $step,
             ];
         }
 
@@ -2249,13 +2294,16 @@ GGWJS;
         return 0;
     }
 
-    private static function mark_cart_item_as_gift($cart_item_data, $campaign_id = '', $trigger_key = '', $trigger_product_id = 0, $label = 'Gratis gave') {
+    private static function mark_cart_item_as_gift($cart_item_data, $campaign_id = '', $trigger_key = '', $trigger_product_id = 0, $label = 'Gratis gave', $slot_index = null) {
         $cart_item_data['_ggw_is_gift'] = '1';
         $cart_item_data['_ggw_campaign_id'] = sanitize_text_field($campaign_id);
         $cart_item_data['_ggw_trigger_key'] = sanitize_text_field($trigger_key);
         $cart_item_data['_ggw_trigger_product_id'] = absint($trigger_product_id);
         $cart_item_data['_ggw_label'] = sanitize_text_field($label);
         $cart_item_data['_ggw_gift_instance'] = wp_generate_uuid4();
+        if ($slot_index !== null) {
+            $cart_item_data['_ggw_slot_index'] = max(0, intval($slot_index));
+        }
 
         return $cart_item_data;
     }
@@ -2279,6 +2327,9 @@ GGWJS;
     public static function restore_gift_cart_item_data($session_data, $values) {
         if (!empty($session_data['_ggw_is_gift'])) {
             $session_data['_ggw_is_gift'] = '1';
+        }
+        if (isset($session_data['_ggw_slot_index'])) {
+            $session_data['_ggw_slot_index'] = max(0, intval($session_data['_ggw_slot_index']));
         }
         return $session_data;
     }
@@ -2579,11 +2630,13 @@ GGWJS;
                 $gift_parent = absint($selection['gift_parent_id'] ?? 0);
                 $gift_variation = absint($selection['gift_variation_id'] ?? 0);
                 if (!self::validate_gift_choice($campaign, $gift_parent, $gift_variation)) continue;
-                $gift_key = $gift_parent . ':' . $gift_variation;
+                $selection_slot = isset($selection['slot_index']) ? max(0, intval($selection['slot_index'])) : null;
+                $gift_key = $gift_parent . ':' . $gift_variation . ':' . ($selection_slot === null ? 'x' : $selection_slot);
                 $triggers[$campaign['id']]['selected_gifts'][] = $gift_key;
                 $triggers[$campaign['id']]['selected_gift_variations'][$gift_key] = [
                     'gift_parent_id' => $gift_parent,
                     'gift_variation_id' => $gift_variation,
+                    'slot_index' => $selection_slot,
                 ];
             }
         }
@@ -2632,13 +2685,16 @@ GGWJS;
                 if (!self::validate_gift_choice($c, $gift_parent_id, $gift_variation_id)) continue;
                 $variation_attributes = $gift_variation_id ? self::get_variation_attributes_for_cart($gift_variation_id) : [];
 
+                $gift_slot_index = isset($info['selected_gift_variations'][$gift_key]['slot_index']) ? max(0, intval($info['selected_gift_variations'][$gift_key]['slot_index'])) : null;
+
                 // Check if a matching gift line already exists for campaign + gift product
                 $exists_key = null;
                 foreach ($gift_lines as $gk => $gitem) {
                     if (($gitem['_ggw_campaign_id'] ?? '') === $cid
                         && empty($kept_gift_lines[$gk])
                         && intval($gitem['product_id']) === $gift_parent_id
-                        && intval($gitem['variation_id'] ?? 0) === $gift_variation_id) {
+                        && intval($gitem['variation_id'] ?? 0) === $gift_variation_id
+                        && (($gift_slot_index === null && !isset($gitem['_ggw_slot_index'])) || ($gift_slot_index !== null && isset($gitem['_ggw_slot_index']) && max(0, intval($gitem['_ggw_slot_index'])) === $gift_slot_index))) {
                         $exists_key = $gk; break;
                     }
                 }
@@ -2652,7 +2708,7 @@ GGWJS;
                 } else {
                     $trigger_ref = reset($info['trigger_keys']);
                     $trigger_product_id = self::get_trigger_product_id_from_keys($cart, $info['trigger_keys']);
-                    $add_data = self::mark_cart_item_as_gift([], $cid, $trigger_ref ?: '', $trigger_product_id, 'Gratis gave');
+                    $add_data = self::mark_cart_item_as_gift([], $cid, $trigger_ref ?: '', $trigger_product_id, 'Gratis gave', $gift_slot_index);
                     $new_key = $cart->add_to_cart($gift_parent_id, 1, $gift_variation_id, $variation_attributes, $add_data);
                     if ($new_key) {
                         if (isset($cart->cart_contents[$new_key]['data'])) {
@@ -2695,7 +2751,8 @@ GGWJS;
                     absint($cart_item['product_id'] ?? 0),
                     absint($cart_item['variation_id'] ?? 0),
                     WC()->cart,
-                    $cart_item_key
+                    $cart_item_key,
+                    isset($cart_item['_ggw_slot_index']) ? max(0, intval($cart_item['_ggw_slot_index'])) : null
                 ) : [];
 
                 if (!empty($choices)) {
@@ -2829,10 +2886,24 @@ GGWJS;
             }));
             if (empty($gifts)) continue;
 
+            $missing_count = max(1, $entitled_total - $gift_count);
+            $slot_gifts = [];
+            for ($slot = 0; $slot < $missing_count; $slot++) {
+                $allowed = self::campaign_allowed_gift_ids_for_slot($c, $slot);
+                $slot_gifts[$slot] = array_values(array_filter($gifts, function($gift_id) use ($allowed) {
+                    return in_array($gift_id, $allowed, true);
+                }));
+                if (empty($slot_gifts[$slot])) {
+                    $slot_gifts[$slot] = $gifts;
+                }
+            }
+
             $missing[$cid] = [
                 'campaign' => $c,
                 'gifts' => $gifts,
-                'missing_count' => max(1, $entitled_total - $gift_count),
+                'slot_gifts' => $slot_gifts,
+                'mode' => self::sanitize_gift_chooser_mode($c['gift_chooser_mode'] ?? 'classic'),
+                'missing_count' => $missing_count,
                 'trigger_key' => strval(reset($row['trigger_keys']) ?: ''),
                 'trigger_product_id' => self::get_trigger_product_id_from_keys($cart, $row['trigger_keys']),
             ];
@@ -2852,12 +2923,18 @@ GGWJS;
             $c = $row['campaign'];
             $missing_count = max(1, intval($row['missing_count'] ?? 1));
             echo '<p style="margin:8px 0 4px;"><strong>' . esc_html($c['title']) . '</strong> (' . sprintf(esc_html__('%d gave(r) gjenstår', 'ggw'), $missing_count) . ')</p>';
-            echo '<p style="font-size:12px;color:#374151;margin:0 0 6px;">Velg ' . intval($missing_count) . ' gave(r) for å fullføre kjøpet trygt.</p>';
+            if (($row['mode'] ?? 'classic') === 'progressive') {
+                echo '<p style="font-size:12px;color:#374151;margin:0 0 6px;">Fullfør gavevalg per steg for å fullføre kjøpet trygt.</p>';
+            } else {
+                echo '<p style="font-size:12px;color:#374151;margin:0 0 6px;">Velg ' . intval($missing_count) . ' gave(r) for å fullføre kjøpet trygt.</p>';
+            }
             for ($slot = 0; $slot < $missing_count; $slot++) {
                 $slot_number = $slot + 1;
                 echo '<div class="ggw-checkout-choice-slot" style="margin:8px 0;padding:8px;border:1px dashed #e5e7eb;border-radius:6px;">';
-                echo '<div style="font-size:12px;font-weight:600;margin-bottom:4px;">Gavevalg ' . intval($slot_number) . '</div>';
-                foreach ($row['gifts'] as $gid) {
+                $slot_gifts = $row['slot_gifts'][$slot] ?? $row['gifts'];
+                $slot_label = (($row['mode'] ?? 'classic') === 'progressive') ? ('Steg ' . intval($slot_number)) : ('Gavevalg ' . intval($slot_number));
+                echo '<div style="font-size:12px;font-weight:600;margin-bottom:4px;">' . esc_html($slot_label) . '</div>';
+                foreach ($slot_gifts as $gid) {
                     $gp = wc_get_product($gid);
                     if (!$gp) continue;
                     echo '<label style="display:block;margin:4px 0">';
@@ -2906,7 +2983,8 @@ GGWJS;
                     wc_add_notice(sprintf(__('Velg gave %d før du fullfører kjøpet.', 'ggw'), $slot + 1), 'error');
                     continue;
                 }
-                if (!in_array($gift, $row['gifts'], true)) {
+                $slot_gifts = $row['slot_gifts'][$slot] ?? $row['gifts'];
+                if (!in_array($gift, $slot_gifts, true)) {
                     wc_add_notice(__('Valgt gave er ikke tilgjengelig nå. Velg på nytt.', 'ggw'), 'error');
                     continue;
                 }
@@ -2961,7 +3039,8 @@ GGWJS;
                 if (!is_array($slot_variations)) $slot_variations = [];
                 $gift_variation_id = absint($slot_variations[$gift_parent_id] ?? 0);
                 if (!$gift_parent_id) continue;
-                if (!in_array($gift_parent_id, $row['gifts'], true)) {
+                $slot_gifts = $row['slot_gifts'][$slot] ?? $row['gifts'];
+                if (!in_array($gift_parent_id, $slot_gifts, true)) {
                     wc_add_notice(__('Valgt gave er ikke gyldig. Prøv igjen.', 'ggw'), 'error');
                     continue;
                 }
@@ -2977,6 +3056,7 @@ GGWJS;
                 $selected_for_campaign[] = [
                     'gift_parent_id' => $gift_parent_id,
                     'gift_variation_id' => $gift_variation_id,
+                    'slot_index' => $slot,
                 ];
             }
 
@@ -3002,7 +3082,8 @@ GGWJS;
                         $cid,
                         sanitize_text_field($row['trigger_key'] ?? 'checkout_fallback'),
                         absint($row['trigger_product_id'] ?? 0),
-                        'Gratis gave'
+                        'Gratis gave',
+                        isset($choice['slot_index']) ? intval($choice['slot_index']) : null
                     );
                     $added_key = $cart->add_to_cart($gift_parent_id, 1, $gift_variation_id, $variation_attributes, $add_data);
                     if (!$added_key) {
