@@ -726,8 +726,20 @@ GGWCSS;
             var normalizeId=function(raw){
                 var str=String(raw||'').trim();
                 if(!str){return '';}
-                var match=str.match(/\d+/);
-                return match?String(parseInt(match[0],10)||''):'';
+
+                if(/^\d+$/.test(str)){
+                    return str;
+                }
+
+                // selectWoo/select2 can occasionally hand back non-normalized values.
+                // Prefer the last numeric segment (often product ID) over the first,
+                // so labels like "(2018-X) ... 1533510443" don't resolve to 2018.
+                var numericParts=str.match(/\d+/g);
+                if(Array.isArray(numericParts) && numericParts.length){
+                    return String(numericParts[numericParts.length-1]);
+                }
+
+                return str;
             };
 
             var addGift=function(rawId,rawLabel){
