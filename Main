@@ -713,10 +713,14 @@ GGWCSS;
         var addSlideBtn=document.querySelector('[data-ggw-progressive-add]');
         var form=modeField?modeField.closest('form'):null;
 
+        var getGiftField=function(){
+            return document.querySelector('[name="gift_products_csv[]"]')||document.querySelector('[name="gift_products_csv"]');
+        };
+
         var getGiftPool=function(){
             var out=[];
             var seen={};
-            var giftField=document.querySelector('[name="gift_products_csv[]"]')||document.querySelector('[name="gift_products_csv"]');
+            var giftField=getGiftField();
             if(!giftField){return out;}
 
             var normalizeId=function(raw){
@@ -873,13 +877,22 @@ GGWCSS;
             });
         }
 
-        var giftField=document.querySelector('[name="gift_products_csv[]"]')||document.querySelector('[name="gift_products_csv"]');
+        var giftField=getGiftField();
         if(giftField){
             giftField.addEventListener('change',syncSlideChoices);
             giftField.addEventListener('input',syncSlideChoices);
             if(window.jQuery){
-                window.jQuery(giftField).on('select2:select select2:unselect',syncSlideChoices);
+                window.jQuery(giftField).on('select2:select select2:unselect selectWoo:select selectWoo:unselect',syncSlideChoices);
             }
+
+            if(window.MutationObserver){
+                var giftObserver=new MutationObserver(syncSlideChoices);
+                giftObserver.observe(giftField,{subtree:true,childList:true,attributes:true,attributeFilter:['selected','value']});
+            }
+
+            [80,240,600].forEach(function(delay){
+                window.setTimeout(syncSlideChoices,delay);
+            });
         }
         if(modeField){
             modeField.addEventListener('change',updateModeVisibility);
