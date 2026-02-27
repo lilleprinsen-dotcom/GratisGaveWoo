@@ -719,25 +719,47 @@ GGWCSS;
             var giftField=document.querySelector('[name="gift_products_csv[]"]')||document.querySelector('[name="gift_products_csv"]');
             if(!giftField){return out;}
 
+            var normalizeId=function(raw){
+                var str=String(raw||'').trim();
+                if(!str){return '';}
+                var match=str.match(/\d+/);
+                return match?String(parseInt(match[0],10)||''):'';
+            };
+
+            var addGift=function(rawId,rawLabel){
+                var id=normalizeId(rawId);
+                if(!id||seen[id]){return;}
+                seen[id]=true;
+                var label=String(rawLabel||'').trim();
+                out.push({id:id,label:label||('Produkt #'+id)});
+            };
+
             if(window.jQuery){
                 var jq=window.jQuery(giftField);
-                if(jq && typeof jq.selectWoo==='function'){
-                    var selectedData=jq.selectWoo('data')||[];
-                    selectedData.forEach(function(item){
-                        var id=parseInt(item&&item.id||'0',10);
-                        if(!id||seen[id]){return;}
-                        seen[id]=true;
-                        out.push({id:String(id),label:String(item.text||('Produkt #'+id)).trim()});
-                    });
+                if(jq){
+                    var readPluginData=function(method){
+                        if(typeof jq[method]!=='function'){return;}
+                        var selectedData=jq[method]('data')||[];
+                        selectedData.forEach(function(item){
+                            addGift(item&&item.id,item&&item.text);
+                        });
+                    };
+
+                    readPluginData('selectWoo');
+                    readPluginData('select2');
+
+                    var selectedValues=jq.val();
+                    if(Array.isArray(selectedValues)){
+                        selectedValues.forEach(function(value){
+                            addGift(value,'');
+                        });
+                    }
                 }
             }
 
             Array.prototype.slice.call(giftField.selectedOptions||giftField.options||[]).forEach(function(opt){
                 if(!opt.selected && giftField.selectedOptions){return;}
-                var id=parseInt(opt.value||'0',10);
-                if(!id||seen[id]){return;}
-                seen[id]=true;
-                out.push({id:String(id),label:(opt.textContent||('Produkt #'+id)).trim()});
+                addGift(opt.value,opt.textContent);
             });
             return out;
         };
