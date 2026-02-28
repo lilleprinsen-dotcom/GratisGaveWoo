@@ -539,7 +539,7 @@ final class GGW_Free_Gift_Campaigns {
 .ggw-gift-preset-preview.is-active{border-color:#2563eb;box-shadow:0 0 0 1px #2563eb inset;background:#eff6ff}
 .ggw-gift-preset-preview-head{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:12px;margin-bottom:8px;color:#111827}
 .ggw-gift-preset-preview-note{color:#4b5563;font-size:11px;line-height:1.4}
-.ggw-progressive-wrap{margin-top:8px;max-width:1100px}
+.ggw-progressive-wrap{margin-top:8px;width:100%;max-width:1500px}
 .ggw-progressive-table{width:100%;border-collapse:collapse}
 .ggw-progressive-table th,.ggw-progressive-table td{padding:8px;border-bottom:1px solid #e5e7eb;vertical-align:top}
 .ggw-progressive-actions{display:flex;gap:6px;flex-wrap:wrap}
@@ -1047,7 +1047,7 @@ GGWJS;
                                         <tr>
                                             <th style="width:120px">Slide</th>
                                             <th>Produkter i slide</th>
-                                            <th style="width:240px">Handlinger</th>
+                                            <th style="width:180px">Handlinger</th>
                                         </tr>
                                     </thead>
                                     <tbody data-ggw-progressive-slides>
