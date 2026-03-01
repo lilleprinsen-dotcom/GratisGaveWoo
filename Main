@@ -2650,6 +2650,50 @@ GGWJS;
         return 0;
     }
 
+    private static function get_trigger_product_id_from_key($cart, $trigger_key) {
+        $trigger_key = strval($trigger_key);
+        if (!$cart || $trigger_key === '' || empty($cart->cart_contents[$trigger_key])) return 0;
+
+        $trigger_item = $cart->cart_contents[$trigger_key];
+        return absint($trigger_item['product_id'] ?? 0);
+    }
+
+    private static function reorder_cart_items_for_visual_grouping($cart) {
+        if (!$cart || empty($cart->cart_contents) || !is_array($cart->cart_contents)) return;
+
+        $ordered = [];
+        $gifts_by_trigger = [];
+
+        foreach ($cart->cart_contents as $key => $item) {
+            if (!self::cart_item_is_gift($item)) continue;
+            $trigger_key = sanitize_text_field($item['_ggw_trigger_key'] ?? '');
+            if (!isset($gifts_by_trigger[$trigger_key])) $gifts_by_trigger[$trigger_key] = [];
+            $gifts_by_trigger[$trigger_key][$key] = $item;
+        }
+
+        foreach ($cart->cart_contents as $key => $item) {
+            if (self::cart_item_is_gift($item)) continue;
+
+            $ordered[$key] = $item;
+            if (!empty($gifts_by_trigger[$key])) {
+                foreach ($gifts_by_trigger[$key] as $gift_key => $gift_item) {
+                    $ordered[$gift_key] = $gift_item;
+                }
+                unset($gifts_by_trigger[$key]);
+            }
+        }
+
+        foreach ($gifts_by_trigger as $trigger_gifts) {
+            foreach ($trigger_gifts as $gift_key => $gift_item) {
+                $ordered[$gift_key] = $gift_item;
+            }
+        }
+
+        if (!empty($ordered)) {
+            $cart->cart_contents = $ordered;
+        }
+    }
+
     private static function mark_cart_item_as_gift($cart_item_data, $campaign_id = '', $trigger_key = '', $trigger_product_id = 0, $label = 'Gratis gave', $slot_index = null) {
         $cart_item_data['_ggw_is_gift'] = '1';
         $cart_item_data['_ggw_campaign_id'] = sanitize_text_field($campaign_id);
@@ -2959,6 +3003,7 @@ GGWJS;
                     'selected_gifts' => [],
                     'selected_gift_variations' => [],
                     'trigger_keys' => [],
+                    'trigger_unit_keys' => [],
                 ];
             }
 
@@ -2969,6 +3014,9 @@ GGWJS;
             $triggers[$campaign['id']]['qty'] += $qty;
             $triggers[$campaign['id']]['subtotal'] += $line_subtotal;
             $triggers[$campaign['id']]['trigger_keys'][] = $key;
+            for ($unit_index = 0; $unit_index < $qty; $unit_index++) {
+                $triggers[$campaign['id']]['trigger_unit_keys'][] = $key;
+            }
 
             $item_selected = $item['_ggw_selected_gifts'] ?? [];
             if (!is_array($item_selected) || empty($item_selected)) {
@@ -3035,11 +3083,26 @@ GGWJS;
 
             $desired = self::apply_campaign_gift_limits_to_desired($c, $desired, $info['selected_gift_variations']);
 
-            foreach ($desired as $gift_key) {
+            $gifts_per_hit = max(1, intval($c['gifts_to_choose'] ?? 1));
+            $trigger_unit_keys = array_values(array_filter(array_map('strval', $info['trigger_unit_keys'] ?? [])));
+            if (empty($trigger_unit_keys)) {
+                $trigger_unit_keys = array_values(array_filter(array_map('strval', $info['trigger_keys'] ?? [])));
+            }
+
+            foreach ($desired as $desired_index => $gift_key) {
                 $gift_parent_id = absint($info['selected_gift_variations'][$gift_key]['gift_parent_id'] ?? 0);
                 $gift_variation_id = absint($info['selected_gift_variations'][$gift_key]['gift_variation_id'] ?? 0);
                 if (!self::validate_gift_choice($c, $gift_parent_id, $gift_variation_id)) continue;
                 $variation_attributes = $gift_variation_id ? self::get_variation_attributes_for_cart($gift_variation_id) : [];
+
+                $entitlement_unit_index = (int) floor($desired_index / $gifts_per_hit);
+                $assigned_trigger_key = '';
+                if (!empty($trigger_unit_keys)) {
+                    $assigned_trigger_key = strval($trigger_unit_keys[$entitlement_unit_index % count($trigger_unit_keys)] ?? '');
+                }
+                if ($assigned_trigger_key === '') {
+                    $assigned_trigger_key = strval(reset($info['trigger_keys']) ?: '');
+                }
 
                 $gift_slot_index = isset($info['selected_gift_variations'][$gift_key]['slot_index']) ? max(0, intval($info['selected_gift_variations'][$gift_key]['slot_index'])) : null;
 
@@ -3050,6 +3113,7 @@ GGWJS;
                         && empty($kept_gift_lines[$gk])
                         && intval($gitem['product_id']) === $gift_parent_id
                         && intval($gitem['variation_id'] ?? 0) === $gift_variation_id
+                        && sanitize_text_field($gitem['_ggw_trigger_key'] ?? '') === $assigned_trigger_key
                         && (($gift_slot_index === null && !isset($gitem['_ggw_slot_index'])) || ($gift_slot_index !== null && isset($gitem['_ggw_slot_index']) && max(0, intval($gitem['_ggw_slot_index'])) === $gift_slot_index))) {
                         $exists_key = $gk; break;
                     }
@@ -3062,9 +3126,11 @@ GGWJS;
                     $cart->set_quantity($exists_key, 1, false);
                     $kept_gift_lines[$exists_key] = true;
                 } else {
-                    $trigger_ref = reset($info['trigger_keys']);
-                    $trigger_product_id = self::get_trigger_product_id_from_keys($cart, $info['trigger_keys']);
-                    $add_data = self::mark_cart_item_as_gift([], $cid, $trigger_ref ?: '', $trigger_product_id, 'Gratis gave', $gift_slot_index);
+                    $trigger_product_id = self::get_trigger_product_id_from_key($cart, $assigned_trigger_key);
+                    if ($trigger_product_id < 1) {
+                        $trigger_product_id = self::get_trigger_product_id_from_keys($cart, $info['trigger_keys']);
+                    }
+                    $add_data = self::mark_cart_item_as_gift([], $cid, $assigned_trigger_key, $trigger_product_id, 'Gratis gave', $gift_slot_index);
                     $new_key = $cart->add_to_cart($gift_parent_id, 1, $gift_variation_id, $variation_attributes, $add_data);
                     if ($new_key) {
                         if (isset($cart->cart_contents[$new_key]['data'])) {
@@ -3076,6 +3142,8 @@ GGWJS;
                 }
             }
         }
+
+        self::reorder_cart_items_for_visual_grouping($cart);
 
         // Remove orphan / excess gifts and keep valid entitlement lines at qty 1
         foreach ($gift_lines as $gk => $gitem) {
@@ -3099,6 +3167,14 @@ GGWJS;
     public static function label_gift_cart_item($name, $cart_item, $cart_item_key) {
         if (self::cart_item_is_gift($cart_item)) {
             $name .= ' <small style="display:block;color:#16a34a;font-weight:600;">Gratis gave</small>';
+            $trigger_key = sanitize_text_field($cart_item['_ggw_trigger_key'] ?? '');
+            if ($trigger_key !== '' && function_exists('WC') && WC() && WC()->cart && !empty(WC()->cart->cart_contents[$trigger_key])) {
+                $trigger_item = WC()->cart->cart_contents[$trigger_key];
+                $trigger_product = $trigger_item['data'] ?? null;
+                if ($trigger_product && is_callable([$trigger_product, 'get_name'])) {
+                    $name .= ' <small style="display:block;color:#4b5563;">Inkludert med: ' . esc_html($trigger_product->get_name()) . '</small>';
+                }
+            }
             if (function_exists('is_cart') && is_cart()) {
                 $campaign_id = sanitize_text_field($cart_item['_ggw_campaign_id'] ?? '');
                 $campaign = self::campaign_by_id($campaign_id);
