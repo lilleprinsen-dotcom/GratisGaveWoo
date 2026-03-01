@@ -2226,7 +2226,7 @@ GGWJS;
         // Required choice validation
         if (!empty($campaign['require_choice']) && empty($campaign['auto_gift'])) {
             $validation_error = '';
-            $selected_gifts = self::collect_selected_gifts_from_request($campaign, WC()->cart, $validation_error);
+            $selected_gifts = self::collect_selected_gifts_from_request($campaign, WC()->cart, $validation_error, $quantity);
             if ($selected_gifts === null) {
                 wc_add_notice($validation_error ?: __('Velg gyldige gaver før du legger varen i handlekurven.', 'ggw'), 'error');
                 return false;
@@ -2244,7 +2244,8 @@ GGWJS;
         $cart_item_data['_ggw_campaign_id'] = $campaign['id'];
         $cart_item_data['_ggw_trigger_parent'] = self::product_parent_id($target_id);
 
-        $selected_gifts = self::collect_selected_gifts_from_request($campaign, WC()->cart);
+        $empty_error = '';
+        $selected_gifts = self::collect_selected_gifts_from_request($campaign, WC()->cart, $empty_error, $quantity);
 
         if (!empty($selected_gifts)) {
             $cart_item_data['_ggw_selected_gifts'] = $selected_gifts;
@@ -2258,17 +2259,19 @@ GGWJS;
         return $cart_item_data;
     }
 
-    private static function collect_selected_gifts_from_request($campaign, $cart = null, &$error = '') {
+    private static function collect_selected_gifts_from_request($campaign, $cart = null, &$error = '', $requested_qty = null) {
         $chooser_mode = self::sanitize_gift_chooser_mode($campaign['gift_chooser_mode'] ?? 'classic');
         if ($chooser_mode === 'progressive') {
             return self::collect_progressive_selected_gifts_from_request($campaign, $cart, $error);
         }
 
-        return self::collect_classic_selected_gifts_from_request($campaign, $cart, $error);
+        return self::collect_classic_selected_gifts_from_request($campaign, $cart, $error, $requested_qty);
     }
 
-    private static function collect_classic_selected_gifts_from_request($campaign, $cart = null, &$error = '') {
-        $required_count = max(1, intval($campaign['gifts_to_choose'] ?? 1));
+    private static function collect_classic_selected_gifts_from_request($campaign, $cart = null, &$error = '', $requested_qty = null) {
+        $base_required = max(1, intval($campaign['gifts_to_choose'] ?? 1));
+        $requested_qty = $requested_qty === null ? max(1, intval($_REQUEST['quantity'] ?? 1)) : max(1, intval($requested_qty));
+        $required_count = max($base_required, self::campaign_entitled_total($campaign, $requested_qty));
         $posted_qty = $_POST['ggw_gift_qty'] ?? [];
         $gift_variation_map = $_POST['ggw_gift_variation_id'] ?? [];
 
@@ -2319,6 +2322,15 @@ GGWJS;
         }
 
         if ($total_selected !== $required_count) {
+            if ($total_selected === $base_required && $required_count > $base_required && !empty($selected_gifts)) {
+                $seed = $selected_gifts;
+                $seed_count = count($seed);
+                for ($i = $seed_count; $i < $required_count; $i++) {
+                    $selected_gifts[] = $seed[$i % $seed_count];
+                }
+                return $selected_gifts;
+            }
+
             $error = sprintf(__('Du må velge nøyaktig %d gave(r) før du legger varen i handlekurven.', 'ggw'), $required_count);
             return null;
         }
@@ -2995,7 +3007,7 @@ GGWJS;
             if (empty($trigger_state['qualifies'])) continue;
             $entitled_total = intval($trigger_state['entitled_total']);
 
-            $selected = array_values(array_unique($info['selected_gifts']));
+            $selected = array_values(array_filter($info['selected_gifts']));
 
             // auto-gift if needed
             if (empty($selected) && !empty($c['auto_gift'])) {
