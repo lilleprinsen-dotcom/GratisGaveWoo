@@ -2511,9 +2511,10 @@ GGWJS;
         $rule_hits = self::campaign_rule_hits($campaign, $trigger_qty);
         if ($rule_hits < 1) return 0;
 
+        // Campaign entitlement scales per qualifying item/hit.
+        // Example: 2 eligible items with 4 gifts each => 8 gifts.
         $gifts_to_choose = max(1, intval($campaign['gifts_to_choose'] ?? 1));
-        $max_gifts_per_order = max(1, intval($campaign['max_gifts_per_order'] ?? 1));
-        return max(0, min($max_gifts_per_order, $rule_hits * $gifts_to_choose));
+        return max(0, $rule_hits * $gifts_to_choose);
     }
 
     private static function get_campaign_gift_limits($campaign) {
