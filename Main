@@ -59,6 +59,7 @@ final class GGW_Free_Gift_Campaigns {
         // Order metadata
         add_action('woocommerce_checkout_create_order_line_item', [__CLASS__, 'add_order_line_meta'], 10, 4);
         add_action('woocommerce_checkout_create_order', [__CLASS__, 'add_order_coupon_conflict_meta'], 20, 2);
+        add_filter('woocommerce_order_item_get_formatted_meta_data', [__CLASS__, 'filter_order_item_formatted_meta'], 20, 2);
 
         // Tiny cache invalidation signal
         add_action('save_post_product', [__CLASS__, 'soft_invalidate_cache']);
@@ -3582,14 +3583,37 @@ GGWJS;
         if (self::cart_item_is_gift($values)) {
             $item->add_meta_data('_ggw_is_gift', '1', true);
             $item->add_meta_data('_ggw_campaign_id', sanitize_text_field($values['_ggw_campaign_id'] ?? ''), true);
-            $item->add_meta_data('_ggw_trigger_key', sanitize_text_field($values['_ggw_trigger_key'] ?? ''), true);
-            $item->add_meta_data('_ggw_trigger_product_id', absint($values['_ggw_trigger_product_id'] ?? 0), true);
-            $item->add_meta_data('Trigger-produkt (ID)', absint($values['_ggw_trigger_product_id'] ?? 0), true);
             $item->add_meta_data('Merking', 'Gratis gave', true);
         } else if (!empty($values['_ggw_campaign_id'])) {
             $item->add_meta_data('_ggw_trigger_campaign', sanitize_text_field($values['_ggw_campaign_id']), true);
             $item->add_meta_data('_ggw_trigger_parent', absint($values['_ggw_trigger_parent'] ?? 0), true);
         }
+    }
+
+    public static function filter_order_item_formatted_meta($formatted_meta, $order_item) {
+        if (!$order_item || !is_array($formatted_meta)) {
+            return $formatted_meta;
+        }
+
+        $is_gift_line = $order_item->get_meta('_ggw_is_gift', true) === '1';
+
+        foreach ($formatted_meta as $meta_id => $meta) {
+            $meta_key = strval($meta->key ?? '');
+            if ($meta_key === '') {
+                continue;
+            }
+
+            if (strpos($meta_key, '_ggw_') === 0) {
+                unset($formatted_meta[$meta_id]);
+                continue;
+            }
+
+            if ($is_gift_line && $meta_key !== 'Merking') {
+                unset($formatted_meta[$meta_id]);
+            }
+        }
+
+        return $formatted_meta;
     }
 
     public static function add_order_coupon_conflict_meta($order, $data) {
