@@ -2745,6 +2745,9 @@ GGWJS;
 
         foreach ($packages as $idx => $package) {
             if (empty($package['contents']) || !is_array($package['contents'])) continue;
+            if (!self::package_has_campaign_affected_items($package)) {
+                continue;
+            }
 
             $gift_total = 0.0;
             foreach ($package['contents'] as $item) {
@@ -2764,6 +2767,7 @@ GGWJS;
 
     public static function filter_free_shipping_availability($is_available, $package, $shipping_method) {
         if (!is_object($shipping_method) || empty($shipping_method->min_amount)) return $is_available;
+        if (!self::package_has_campaign_affected_items($package)) return $is_available;
 
         $requires = $shipping_method->requires ?? '';
         if (!in_array($requires, ['min_amount', 'either', 'both'], true)) return $is_available;
@@ -2793,6 +2797,30 @@ GGWJS;
         }
 
         return $is_available;
+    }
+
+    private static function package_has_campaign_affected_items($package) {
+        $contents = $package['contents'] ?? [];
+        if (!is_array($contents) || empty($contents)) {
+            return false;
+        }
+
+        foreach ($contents as $item) {
+            if (self::cart_item_is_gift($item)) {
+                return true;
+            }
+
+            $candidate_id = absint($item['variation_id'] ?? 0);
+            if (!$candidate_id) {
+                $candidate_id = absint($item['product_id'] ?? 0);
+            }
+
+            if ($candidate_id && self::get_best_campaign_for_product($candidate_id)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public static function exclude_gifts_from_coupon_product_validation($valid, $product, $coupon, $values) {
