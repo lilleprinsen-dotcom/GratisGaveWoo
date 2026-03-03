@@ -2776,7 +2776,16 @@ GGWJS;
 
         // Align threshold checks with shipping package totals. Gift lines are already
         // removed from package content cost in filter_shipping_packages().
+        //
+        // NOTE: WooCommerce stores contents_cost ex VAT. If the store evaluates free
+        // shipping threshold incl VAT, a cart like 1,799 (incl 25% VAT) becomes 1,439
+        // ex VAT and incorrectly fails a 1,500 threshold unless we add tax back in.
         $package_contents_cost = floatval($package['contents_cost'] ?? 0);
+
+        if (function_exists('WC') && WC() && WC()->cart && WC()->cart->display_prices_including_tax()) {
+            $package_contents_cost += floatval($package['cart_contents_tax'] ?? 0);
+        }
+
         $minimum_amount = floatval($shipping_method->min_amount);
 
         if ($package_contents_cost < $minimum_amount) {
