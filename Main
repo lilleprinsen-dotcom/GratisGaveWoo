@@ -2764,15 +2764,18 @@ GGWJS;
         $requires = $shipping_method->requires ?? '';
         if (!in_array($requires, ['min_amount', 'either', 'both'], true)) return $is_available;
 
-        $cart = WC()->cart;
-        if (!$cart) return $is_available;
-
-        $non_gift_subtotal = self::get_non_gift_cart_subtotal($cart);
-        if (in_array($requires, ['min_amount', 'either'], true) && $non_gift_subtotal < floatval($shipping_method->min_amount)) {
-            return false;
+        // For "either" (coupon OR amount), never force false because WooCommerce may
+        // already allow free shipping based on coupon requirements.
+        if ($requires === 'either') {
+            return $is_available;
         }
 
-        if ($requires === 'both' && $non_gift_subtotal < floatval($shipping_method->min_amount)) {
+        // Align threshold checks with shipping package totals. Gift lines are already
+        // removed from package content cost in filter_shipping_packages().
+        $package_contents_cost = floatval($package['contents_cost'] ?? 0);
+        $minimum_amount = floatval($shipping_method->min_amount);
+
+        if ($package_contents_cost < $minimum_amount) {
             return false;
         }
 
