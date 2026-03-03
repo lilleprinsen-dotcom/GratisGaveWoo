@@ -143,6 +143,7 @@ final class GGW_Free_Gift_Campaigns {
             'min_qty' => 1,
             'min_subtotal' => 0,
             'exclude_sale' => 0,
+            'allow_with_coupons' => 1,
             'gift_products' => [],
             'gift_product_limits' => [],
             'gifts_to_choose' => 1,
@@ -183,6 +184,7 @@ final class GGW_Free_Gift_Campaigns {
 
         $c['active'] = !empty($c['active']) ? 1 : 0;
         $c['exclude_sale'] = !empty($c['exclude_sale']) ? 1 : 0;
+        $c['allow_with_coupons'] = !empty($c['allow_with_coupons']) ? 1 : 0;
         $c['require_choice'] = !empty($c['require_choice']) ? 1 : 0;
         $c['auto_gift'] = !empty($c['auto_gift']) ? 1 : 0;
         $c['priority'] = intval($c['priority']);
@@ -1200,6 +1202,7 @@ GGWJS;
                     <tr><th colspan="2"><h2 style="margin:12px 0 0;">Avanserte innstillinger</h2><p class="description" style="margin:6px 0 0;">For deg som vil finstyre oppførselen. Du kan la disse stå på standard hvis du er usikker.</p></th></tr>
                     <tr><th>Prioritet ved overlapp</th><td><input type="number" name="priority" value="<?php echo esc_attr($editing['priority']); ?>"><p class="description">Hvis flere kampanjer matcher samtidig, vinner høyest tall.</p></td></tr>
                     <tr><th>Ekskluder salgsvarer</th><td><label><input type="checkbox" name="exclude_sale" value="1" <?php checked(!empty($editing['exclude_sale'])); ?>> Salgsvarer teller ikke for å utløse kampanjen</label></td></tr>
+                    <tr><th>Kombiner med rabattkoder</th><td><label><input type="checkbox" name="allow_with_coupons" value="1" <?php checked(!empty($editing['allow_with_coupons'])); ?>> Kampanjen kan brukes sammen med andre rabattkoder i checkout</label><p class="description">Skru av for å blokkere gavekampanjen når kunden har lagt inn én eller flere rabattkoder.</p></td></tr>
                     <tr><th>Maks antall ganger per kunde</th><td><input type="number" name="max_per_customer" value="<?php echo esc_attr($editing['max_per_customer']); ?>" min="0"><p class="description">0 = ingen begrensning. 1 = kunden kan bruke kampanjen én gang totalt.</p></td></tr>
                     <tr><th>Krever aktivt gavevalg</th><td><label><input type="checkbox" name="require_choice" value="1" <?php checked(!empty($editing['require_choice'])); ?>> Kunden må velge gave før checkout</label><p class="description">Skru av hvis du vil la kunden gå videre uten å velge gave.</p></td></tr>
                     <tr><th>Auto-legg til gave</th><td><label><input type="checkbox" name="auto_gift" value="1" <?php checked(!empty($editing['auto_gift'])); ?>> Legg til første tilgjengelige gave automatisk</label><p class="description">Nyttig hvis du vil gjøre flyten så enkel som mulig.</p></td></tr>
@@ -1367,6 +1370,7 @@ GGWJS;
                 'min_qty' => intval($_POST['min_qty'] ?? 1),
                 'min_subtotal' => floatval($_POST['min_subtotal'] ?? 0),
                 'exclude_sale' => !empty($_POST['exclude_sale']),
+                'allow_with_coupons' => !empty($_POST['allow_with_coupons']),
                 'gift_products' => $posted_gift_products,
                 'gift_product_limits' => array_map('intval', (array) ($_POST['gift_product_limits'] ?? [])),
                 'gifts_to_choose' => $posted_gifts_to_choose,
@@ -2837,6 +2841,19 @@ GGWJS;
         WC()->session->set('ggw_coupon_gift_conflicts', $reasons);
     }
 
+    private static function cart_has_applied_coupons($cart = null) {
+        if (!$cart && function_exists('WC') && WC()) {
+            $cart = WC()->cart;
+        }
+
+        if (!$cart || !is_callable([$cart, 'get_applied_coupons'])) {
+            return false;
+        }
+
+        $coupon_codes = array_values(array_filter(array_map('wc_clean', (array) $cart->get_applied_coupons())));
+        return !empty($coupon_codes);
+    }
+
     private static function evaluate_campaign_trigger_state($campaign, $qty, $subtotal, $campaign_id = '') {
         $qty = max(0, intval($qty));
         $subtotal = max(0.0, floatval($subtotal));
@@ -2854,6 +2871,10 @@ GGWJS;
 
         if ($subtotal < floatval($campaign['min_subtotal'])) {
             return ['qualifies' => false, 'entitled_total' => 0, 'missing_qty' => $missing_qty, 'missing_subtotal' => $missing_subtotal, 'blocked' => false];
+        }
+
+        if (empty($campaign['allow_with_coupons']) && self::cart_has_applied_coupons()) {
+            return ['qualifies' => false, 'entitled_total' => 0, 'missing_qty' => 0, 'missing_subtotal' => 0.0, 'blocked' => true];
         }
 
         if (!empty($campaign['max_per_customer']) && $campaign_id !== '') {
