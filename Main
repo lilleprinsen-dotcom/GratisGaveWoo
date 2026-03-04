@@ -1202,7 +1202,7 @@ GGWJS;
                     <tr><th colspan="2"><h2 style="margin:12px 0 0;">Avanserte innstillinger</h2><p class="description" style="margin:6px 0 0;">For deg som vil finstyre oppførselen. Du kan la disse stå på standard hvis du er usikker.</p></th></tr>
                     <tr><th>Prioritet ved overlapp</th><td><input type="number" name="priority" value="<?php echo esc_attr($editing['priority']); ?>"><p class="description">Hvis flere kampanjer matcher samtidig, vinner høyest tall.</p></td></tr>
                     <tr><th>Ekskluder salgsvarer</th><td><label><input type="checkbox" name="exclude_sale" value="1" <?php checked(!empty($editing['exclude_sale'])); ?>> Salgsvarer teller ikke for å utløse kampanjen</label></td></tr>
-                    <tr><th>Kombiner med rabattkoder</th><td><label><input type="checkbox" name="allow_with_coupons" value="1" <?php checked(!empty($editing['allow_with_coupons'])); ?>> Kampanjen kan brukes sammen med andre rabattkoder i checkout</label><p class="description">Skru av for å blokkere gavekampanjen når kunden har lagt inn én eller flere rabattkoder.</p></td></tr>
+                    <tr><th>Kombiner med rabattkoder</th><td><label><input type="checkbox" name="allow_with_coupons" value="1" <?php checked(!empty($editing['allow_with_coupons'])); ?>> Kampanjen kan brukes sammen med andre rabattkoder i checkout</label><p class="description">Skru av for å hindre at rabattkoder gir rabatt på hovedprodukt(er) som utløser kampanjen. Gaver legges fortsatt til når kampanjen er kvalifisert, og rabattkoder kan fortsatt brukes på andre produkter i handlekurven.</p></td></tr>
                     <tr><th>Maks antall ganger per kunde</th><td><input type="number" name="max_per_customer" value="<?php echo esc_attr($editing['max_per_customer']); ?>" min="0"><p class="description">0 = ingen begrensning. 1 = kunden kan bruke kampanjen én gang totalt.</p></td></tr>
                     <tr><th>Krever aktivt gavevalg</th><td><label><input type="checkbox" name="require_choice" value="1" <?php checked(!empty($editing['require_choice'])); ?>> Kunden må velge gave før checkout</label><p class="description">Skru av hvis du vil la kunden gå videre uten å velge gave.</p></td></tr>
                     <tr><th>Auto-legg til gave</th><td><label><input type="checkbox" name="auto_gift" value="1" <?php checked(!empty($editing['auto_gift'])); ?>> Legg til første tilgjengelige gave automatisk</label><p class="description">Nyttig hvis du vil gjøre flyten så enkel som mulig.</p></td></tr>
@@ -2824,13 +2824,48 @@ GGWJS;
     }
 
     public static function exclude_gifts_from_coupon_product_validation($valid, $product, $coupon, $values) {
-        if (!self::cart_item_is_gift($values)) return $valid;
+        if (self::cart_item_is_gift($values) && self::should_exclude_gift_item_from_sums($values, 'coupon_validation')) {
+            return false;
+        }
 
-        if (self::should_exclude_gift_item_from_sums($values, 'coupon_validation')) {
+        if (!self::coupon_can_apply_to_cart_item($values)) {
             return false;
         }
 
         return $valid;
+    }
+
+    private static function coupon_can_apply_to_cart_item($cart_item) {
+        if (!is_array($cart_item)) {
+            return true;
+        }
+
+        if (self::cart_item_is_gift($cart_item)) {
+            return true;
+        }
+
+        $product_id = absint($cart_item['variation_id'] ?? 0);
+        if (!$product_id) {
+            $product_id = absint($cart_item['product_id'] ?? 0);
+        }
+        if (!$product_id) {
+            return true;
+        }
+
+        $campaign = self::get_best_campaign_for_product($product_id);
+        if (!$campaign || !self::campaign_active_now($campaign)) {
+            return true;
+        }
+
+        if (!empty($campaign['allow_with_coupons'])) {
+            return true;
+        }
+
+        if (!self::cart_item_counts_for_campaign_trigger($cart_item, $campaign)) {
+            return true;
+        }
+
+        return false;
     }
 
     private static function coupon_priority_notice_text() {
@@ -2909,11 +2944,6 @@ GGWJS;
         if ($subtotal < floatval($campaign['min_subtotal'])) {
             return ['qualifies' => false, 'entitled_total' => 0, 'missing_qty' => $missing_qty, 'missing_subtotal' => $missing_subtotal, 'blocked' => false];
         }
-
-        if (empty($campaign['allow_with_coupons']) && self::cart_has_applied_coupons()) {
-            return ['qualifies' => false, 'entitled_total' => 0, 'missing_qty' => 0, 'missing_subtotal' => 0.0, 'blocked' => true];
-        }
-
         if (!empty($campaign['max_per_customer']) && $campaign_id !== '') {
             $used = self::customer_used_count_for_campaign($campaign_id);
             if ($used >= intval($campaign['max_per_customer'])) {
