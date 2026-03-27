@@ -44,6 +44,7 @@ final class GGW_Free_Gift_Campaigns {
         add_action('woocommerce_cart_loaded_from_session', [__CLASS__, 'mark_session_loaded']);
         add_filter('woocommerce_get_cart_item_from_session', [__CLASS__, 'restore_gift_cart_item_data'], 20, 2);
         add_filter('woocommerce_cart_item_name', [__CLASS__, 'label_gift_cart_item'], 10, 3);
+        add_action('woocommerce_after_cart_item_name', [__CLASS__, 'render_cart_item_swap_ui'], 10, 2);
         add_filter('woocommerce_get_item_data', [__CLASS__, 'display_cart_item_meta'], 10, 2);
         add_action('woocommerce_remove_cart_item', [__CLASS__, 'cleanup_removed_trigger'], 10, 2);
         add_filter('woocommerce_cart_shipping_packages', [__CLASS__, 'filter_shipping_packages'], 20);
@@ -1925,6 +1926,10 @@ GGWJS;
         );
     }
 
+    private static function get_swap_gift_nonce($cart_item_key) {
+        return wp_create_nonce('ggw_swap_gift_' . sanitize_text_field((string) $cart_item_key));
+    }
+
     public static function maybe_handle_swap_gift_action() {
         if (empty($_GET['ggw_action']) || sanitize_text_field(wp_unslash($_GET['ggw_action'])) !== 'swap_gift') return;
 
@@ -3515,117 +3520,138 @@ GGWJS;
     }
 
     public static function label_gift_cart_item($name, $cart_item, $cart_item_key) {
+        return $name;
+    }
+
+    public static function render_cart_item_swap_ui($cart_item, $cart_item_key) {
+        if (!function_exists('is_cart') || !is_cart()) {
+            return;
+        }
+
         if (self::cart_item_is_gift($cart_item)) {
-            $name .= ' <small style="display:block;color:#16a34a;font-weight:600;">Gratis gave</small>';
+            echo '<small style="display:block;color:#16a34a;font-weight:600;">Gratis gave</small>';
+
             $trigger_key = sanitize_text_field($cart_item['_ggw_trigger_key'] ?? '');
             if ($trigger_key !== '' && function_exists('WC') && WC() && WC()->cart && !empty(WC()->cart->cart_contents[$trigger_key])) {
                 $trigger_item = WC()->cart->cart_contents[$trigger_key];
                 $trigger_product = $trigger_item['data'] ?? null;
                 if ($trigger_product && is_callable([$trigger_product, 'get_name'])) {
-                    $name .= ' <small style="display:block;color:#4b5563;">Inkludert med: ' . esc_html($trigger_product->get_name()) . '</small>';
-                }
-            }
-            if (function_exists('is_cart') && is_cart()) {
-                $campaign_id = sanitize_text_field($cart_item['_ggw_campaign_id'] ?? '');
-                $campaign = self::campaign_by_id($campaign_id);
-                $choices = $campaign ? self::get_available_swap_choices_for_gift(
-                    $campaign,
-                    absint($cart_item['product_id'] ?? 0),
-                    absint($cart_item['variation_id'] ?? 0),
-                    WC()->cart,
-                    $cart_item_key,
-                    isset($cart_item['_ggw_slot_index']) ? max(0, intval($cart_item['_ggw_slot_index'])) : null
-                ) : [];
-
-                if (!empty($choices)) {
-                    $modal_id = 'ggw-swap-modal-' . sanitize_html_class($cart_item_key);
-                    $heading_id = $modal_id . '-heading';
-                    $desc_id = $modal_id . '-desc';
-                    $current_gift_name = '';
-                    if (!empty($cart_item['data']) && is_object($cart_item['data']) && is_callable([$cart_item['data'], 'get_name'])) {
-                        $current_gift_name = sanitize_text_field($cart_item['data']->get_name());
-                    }
-
-                    $name .= ' <small style="display:block;margin-top:6px;"><a href="#" class="ggw-open-swap-modal" data-ggw-modal-id="' . esc_attr($modal_id) . '" aria-controls="' . esc_attr($modal_id) . '" aria-label="' . esc_attr__('Åpne gavevelger for å bytte gave', 'ggw') . '">Bytt gave</a></small>';
-                    $name .= '<div id="' . esc_attr($modal_id) . '" class="ggw-swap-modal" aria-hidden="true">';
-                    $name .= '<div class="ggw-swap-modal__backdrop" data-ggw-modal-close></div>';
-                    $name .= '<div class="ggw-swap-modal__panel" role="dialog" aria-modal="true" aria-labelledby="' . esc_attr($heading_id) . '" aria-describedby="' . esc_attr($desc_id) . '" tabindex="-1">';
-                    $name .= '<button type="button" class="ggw-swap-modal__close" data-ggw-modal-close aria-label="' . esc_attr__('Lukk bytt gave-dialog', 'ggw') . '">×</button>';
-                    $name .= '<div class="ggw-swap-modal__header">';
-                    $name .= '<h4 id="' . esc_attr($heading_id) . '" class="ggw-swap-modal__title">Bytt gave</h4>';
-                    if ($current_gift_name !== '') {
-                        $name .= '<p class="ggw-swap-modal__current">Nåværende gave: <strong>' . esc_html($current_gift_name) . '</strong></p>';
-                    }
-                    $name .= '<p id="' . esc_attr($desc_id) . '" class="ggw-swap-modal__subtitle">Velg en annen tilgjengelig gave. Noen gaver har flere størrelser eller varianter.</p>';
-                    $name .= '</div>';
-                    $name .= '<div class="ggw-swap-modal__content">';
-                    $name .= '<ul class="ggw-swap-choice-list" aria-label="' . esc_attr__('Tilgjengelige gavevalg', 'ggw') . '">';
-
-                    foreach ($choices as $choice) {
-                        $product = $choice['product'];
-                        $target_parent_id = absint($choice['gift_parent_id'] ?? 0);
-                        $target_variation_id = absint($choice['gift_variation_id'] ?? 0);
-                        $label = $product ? $product->get_name() : __('Gavevalg', 'ggw');
-                        $thumb_html = self::get_swap_choice_thumbnail_html($product);
-
-                        if (!empty($choice['is_variable'])) {
-                            $hint = self::get_swap_variation_hint_text($choice['variation_choices'] ?? []);
-                            $name .= '<li class="ggw-swap-choice ggw-swap-choice--variable">';
-                            $name .= $thumb_html;
-                            $name .= '<div class="ggw-swap-choice__body">';
-                            $name .= '<div class="ggw-swap-choice__name">' . esc_html($label) . '</div>';
-                            if ($hint !== '') {
-                                $name .= '<p class="ggw-swap-choice__meta">' . esc_html($hint) . '</p>';
-                            }
-                            $name .= '<div class="ggw-swap-choice__form">';
-                            $name .= '<span class="ggw-swap-choice__label">' . esc_html__('Velg variant', 'ggw') . '</span>';
-                            $name .= '<div style="display:grid;gap:6px;">';
-                            foreach (($choice['variation_choices'] ?? []) as $variation_choice) {
-                                $variation_id = absint($variation_choice['gift_variation_id'] ?? 0);
-                                if (!$variation_id) continue;
-                                $variation_label = sanitize_text_field($variation_choice['label'] ?? '');
-                                $swap_url = self::get_swap_gift_url($cart_item_key, $target_parent_id, $variation_id);
-                                $button_text = sprintf(__('Bytt til %s', 'ggw'), $variation_label !== '' ? $variation_label : __('valgt variant', 'ggw'));
-                                $name .= '<a class="button alt ggw-swap-choice__btn" href="' . esc_url($swap_url) . '" aria-label="' . esc_attr(sprintf(__('Bytt til variant %1$s av %2$s', 'ggw'), $variation_label, $label)) . '">' . esc_html($button_text) . '</a>';
-                            }
-                            $name .= '</div>';
-                            $name .= '</div>';
-                            $name .= '</li>';
-                            continue;
-                        }
-
-                        $swap_url = self::get_swap_gift_url($cart_item_key, $target_parent_id, $target_variation_id);
-                        $name .= '<li class="ggw-swap-choice">';
-                        $name .= $thumb_html;
-                        $name .= '<div class="ggw-swap-choice__body">';
-                        $name .= '<div class="ggw-swap-choice__name">' . esc_html($label) . '</div>';
-                        $name .= '<p class="ggw-swap-choice__meta">' . esc_html__('Enkel gave', 'ggw') . '</p>';
-                        $name .= '<a class="button alt ggw-swap-choice__btn" href="' . esc_url($swap_url) . '" aria-label="' . esc_attr(sprintf(__('Bytt til %s', 'ggw'), $label)) . '">' . esc_html__('Bytt til denne', 'ggw') . '</a>';
-                        $name .= '</div>';
-                        $name .= '</li>';
-                    }
-
-                    $name .= '</ul>';
-                    $name .= '</div>';
-                    $name .= '</div>';
-                    $name .= '</div>';
+                    echo '<small style="display:block;color:#4b5563;">Inkludert med: ' . esc_html($trigger_product->get_name()) . '</small>';
                 }
             }
 
-            return $name;
+            $campaign_id = sanitize_text_field($cart_item['_ggw_campaign_id'] ?? '');
+            $campaign = self::campaign_by_id($campaign_id);
+            $choices = $campaign ? self::get_available_swap_choices_for_gift(
+                $campaign,
+                absint($cart_item['product_id'] ?? 0),
+                absint($cart_item['variation_id'] ?? 0),
+                WC()->cart,
+                $cart_item_key,
+                isset($cart_item['_ggw_slot_index']) ? max(0, intval($cart_item['_ggw_slot_index'])) : null
+            ) : [];
+
+            if (!empty($choices)) {
+                echo self::get_swap_modal_markup($cart_item, $cart_item_key, $choices); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+            }
+            return;
         }
 
         if (!empty($cart_item['_ggw_campaign_id'])) {
-            $name .= ' <small style="display:block;margin-top:4px;color:#92400e;">Ved retur av hovedprodukt uten gratis gave(r), belastes gavene til full pris.</small>';
+            echo '<small style="display:block;margin-top:4px;color:#92400e;">Ved retur av hovedprodukt uten gratis gave(r), belastes gavene til full pris.</small>';
+        }
+    }
+
+    private static function get_swap_modal_markup($cart_item, $cart_item_key, $choices) {
+        $modal_id = 'ggw-swap-modal-' . sanitize_html_class($cart_item_key);
+        $heading_id = $modal_id . '-heading';
+        $desc_id = $modal_id . '-desc';
+        $current_gift_name = '';
+        if (!empty($cart_item['data']) && is_object($cart_item['data']) && is_callable([$cart_item['data'], 'get_name'])) {
+            $current_gift_name = sanitize_text_field($cart_item['data']->get_name());
         }
 
-        return $name;
+        $html = '<div class="ggw-swap-modal-wrap">';
+        $html .= '<small style="display:block;margin-top:6px;"><button type="button" class="ggw-open-swap-modal ggw-swap-modal-trigger" data-ggw-modal-id="' . esc_attr($modal_id) . '" aria-controls="' . esc_attr($modal_id) . '" aria-haspopup="dialog" aria-label="' . esc_attr__('Åpne gavevelger for å bytte gave', 'ggw') . '">' . esc_html__('Bytt gave', 'ggw') . '</button></small>';
+        $html .= '<div id="' . esc_attr($modal_id) . '" class="ggw-swap-modal" aria-hidden="true">';
+        $html .= '<div class="ggw-swap-modal__backdrop" data-ggw-modal-close></div>';
+        $html .= '<div class="ggw-swap-modal__panel" role="dialog" aria-modal="true" aria-labelledby="' . esc_attr($heading_id) . '" aria-describedby="' . esc_attr($desc_id) . '" tabindex="-1">';
+        $html .= '<button type="button" class="ggw-swap-modal__close" data-ggw-modal-close aria-label="' . esc_attr__('Lukk bytt gave-dialog', 'ggw') . '">×</button>';
+        $html .= '<div class="ggw-swap-modal__header">';
+        $html .= '<h4 id="' . esc_attr($heading_id) . '" class="ggw-swap-modal__title">Bytt gave</h4>';
+        if ($current_gift_name !== '') {
+            $html .= '<p class="ggw-swap-modal__current">Nåværende gave: <strong>' . esc_html($current_gift_name) . '</strong></p>';
+        }
+        $html .= '<p id="' . esc_attr($desc_id) . '" class="ggw-swap-modal__subtitle">Velg en annen tilgjengelig gave. Noen gaver har flere størrelser eller varianter.</p>';
+        $html .= '</div>';
+        $html .= '<div class="ggw-swap-modal__content">';
+        $html .= '<ul class="ggw-swap-choice-list" aria-label="' . esc_attr__('Tilgjengelige gavevalg', 'ggw') . '">';
+
+        foreach ($choices as $choice_index => $choice) {
+            $product = $choice['product'];
+            $target_parent_id = absint($choice['gift_parent_id'] ?? 0);
+            $target_variation_id = absint($choice['gift_variation_id'] ?? 0);
+            $label = $product ? $product->get_name() : __('Gavevalg', 'ggw');
+            $thumb_html = self::get_swap_choice_thumbnail_html($product);
+
+            if (!empty($choice['is_variable'])) {
+                $hint = self::get_swap_variation_hint_text($choice['variation_choices'] ?? []);
+                $select_id = $modal_id . '-variation-' . intval($choice_index);
+                $html .= '<li class="ggw-swap-choice ggw-swap-choice--variable">';
+                $html .= $thumb_html;
+                $html .= '<div class="ggw-swap-choice__body">';
+                $html .= '<div class="ggw-swap-choice__name">' . esc_html($label) . '</div>';
+                if ($hint !== '') {
+                    $html .= '<p class="ggw-swap-choice__meta">' . esc_html($hint) . '</p>';
+                }
+                $html .= '<form method="get" action="' . esc_url(wc_get_cart_url()) . '" class="ggw-swap-choice__form">';
+                $html .= '<input type="hidden" name="ggw_action" value="swap_gift">';
+                $html .= '<input type="hidden" name="ggw_gift_key" value="' . esc_attr(sanitize_text_field((string) $cart_item_key)) . '">';
+                $html .= '<input type="hidden" name="ggw_target_parent_id" value="' . esc_attr($target_parent_id) . '">';
+                $html .= '<input type="hidden" name="_wpnonce" value="' . esc_attr(self::get_swap_gift_nonce($cart_item_key)) . '">';
+                $html .= '<label class="ggw-swap-choice__label" for="' . esc_attr($select_id) . '">' . esc_html__('Velg variant', 'ggw') . '</label>';
+                $html .= '<select id="' . esc_attr($select_id) . '" name="ggw_target_variation_id" class="ggw-swap-choice__select" required>';
+                $html .= '<option value="">' . esc_html__('Velg størrelse/variant', 'ggw') . '</option>';
+                foreach (($choice['variation_choices'] ?? []) as $variation_choice) {
+                    $variation_id = absint($variation_choice['gift_variation_id'] ?? 0);
+                    if (!$variation_id) {
+                        continue;
+                    }
+                    $variation_label = sanitize_text_field($variation_choice['label'] ?? '');
+                    $html .= '<option value="' . esc_attr($variation_id) . '">' . esc_html($variation_label !== '' ? $variation_label : __('Variant', 'ggw')) . '</option>';
+                }
+                $html .= '</select>';
+                $html .= '<button type="submit" class="button alt ggw-swap-choice__btn">' . esc_html__('Bytt til valgt variant', 'ggw') . '</button>';
+                $html .= '</form>';
+                $html .= '</div>';
+                $html .= '</li>';
+                continue;
+            }
+
+            $swap_url = self::get_swap_gift_url($cart_item_key, $target_parent_id, $target_variation_id);
+            $html .= '<li class="ggw-swap-choice">';
+            $html .= $thumb_html;
+            $html .= '<div class="ggw-swap-choice__body">';
+            $html .= '<div class="ggw-swap-choice__name">' . esc_html($label) . '</div>';
+            $html .= '<p class="ggw-swap-choice__meta">' . esc_html__('Enkel gave', 'ggw') . '</p>';
+            $html .= '<a class="button alt ggw-swap-choice__btn" href="' . esc_url($swap_url) . '" aria-label="' . esc_attr(sprintf(__('Bytt til %s', 'ggw'), $label)) . '">' . esc_html__('Bytt til denne', 'ggw') . '</a>';
+            $html .= '</div>';
+            $html .= '</li>';
+        }
+
+        $html .= '</ul>';
+        $html .= '</div>';
+        $html .= '</div>';
+        $html .= '</div>';
+        $html .= '</div>';
+
+        return $html;
     }
 
 
     public static function render_swap_gift_modal_assets() {
         if (!function_exists('is_cart') || (!is_cart() && !(function_exists('is_checkout') && is_checkout()))) return;
-        echo '<style>.ggw-swap-modal{position:fixed;inset:0;display:none;z-index:9999}.ggw-swap-modal.is-open{display:grid;place-items:flex-start center;padding:4vh 16px;overflow:auto}.ggw-swap-modal__backdrop{position:fixed;inset:0;background:rgba(15,23,42,.58)}.ggw-swap-modal__panel{position:relative;background:#fff;width:min(760px,96vw);margin:0;border-radius:16px;box-shadow:0 30px 80px rgba(2,6,23,.33);display:flex;flex-direction:column;max-height:90vh;overflow:hidden;isolation:isolate}.ggw-swap-modal__header{padding:20px 24px 14px;border-bottom:1px solid #edf1f6;background:linear-gradient(180deg,#fff 0%,#f9fbff 100%);position:sticky;top:0;z-index:2}.ggw-swap-modal__title{margin:0;font-size:1.2rem;line-height:1.35;font-weight:700;color:#0f172a;padding-right:34px}.ggw-swap-modal__current{margin:8px 0 0;color:#0f172a;font-size:14px}.ggw-swap-modal__subtitle{margin:8px 0 0;color:#475569;font-size:13px;line-height:1.45}.ggw-swap-modal__content{padding:16px 24px 20px;overflow-y:auto;overscroll-behavior:contain}.ggw-swap-choice-list{margin:0;padding:0;list-style:none;display:grid;gap:12px}.ggw-swap-choice{display:grid;grid-template-columns:68px minmax(0,1fr);gap:14px;align-items:start;border:1px solid #e2e8f0;border-radius:12px;background:#fff;padding:12px;transition:border-color .15s ease,box-shadow .15s ease,transform .15s ease}.ggw-swap-choice:hover{border-color:#94a3b8;box-shadow:0 8px 18px rgba(15,23,42,.08)}.ggw-swap-choice:focus-within{border-color:#2563eb;box-shadow:0 0 0 2px rgba(37,99,235,.18)}.ggw-swap-choice__thumb-wrap{display:block}.ggw-swap-choice__thumb{width:64px;height:64px;border-radius:10px;display:block;object-fit:cover;background:#f1f5f9;border:1px solid #e2e8f0}.ggw-swap-choice__body{min-width:0;display:grid;gap:8px}.ggw-swap-choice__name{font-size:15px;line-height:1.4;font-weight:600;color:#0f172a}.ggw-swap-choice__meta{margin:0;color:#64748b;font-size:12px;line-height:1.4}.ggw-swap-choice__form{display:grid;gap:8px}.ggw-swap-choice__label{display:block;font-size:12px;font-weight:600;color:#334155}.ggw-swap-choice__select{width:100%;height:40px;border-radius:10px;border:1px solid #cbd5e1;padding:0 12px;background:#fff;color:#0f172a}.ggw-swap-choice__select:focus{outline:none;border-color:#2563eb;box-shadow:0 0 0 2px rgba(37,99,235,.2)}.ggw-swap-choice__btn.button.alt,.ggw-swap-choice__btn.button{width:100%;text-align:center;display:inline-flex;align-items:center;justify-content:center;min-height:40px;border-radius:10px;font-weight:600;background:#2563eb;border-color:#2563eb;color:#fff;transition:background .15s ease,border-color .15s ease,transform .12s ease}.ggw-swap-choice__btn.button.alt:hover,.ggw-swap-choice__btn.button:hover{background:#1d4ed8;border-color:#1d4ed8;color:#fff;transform:translateY(-1px)}.ggw-swap-choice__btn.button.alt:focus,.ggw-swap-choice__btn.button:focus{outline:none;box-shadow:0 0 0 2px rgba(37,99,235,.22)}.ggw-swap-modal__close{position:absolute;top:12px;right:12px;border:1px solid #d1d5db;background:#fff;font-size:24px;line-height:1;width:36px;height:36px;border-radius:999px;cursor:pointer;color:#475569;display:flex;align-items:center;justify-content:center;z-index:3;transition:background .15s ease,color .15s ease,border-color .15s ease}.ggw-swap-modal__close:hover{background:#f1f5f9;border-color:#94a3b8;color:#0f172a}.ggw-swap-modal__close:focus{outline:none;border-color:#2563eb;box-shadow:0 0 0 2px rgba(37,99,235,.22)}@media (max-width:767px){.ggw-swap-modal.is-open{padding:8px}.ggw-swap-modal__panel{width:100%;max-height:92vh;border-radius:14px}.ggw-swap-modal__header{padding:16px 16px 12px}.ggw-swap-modal__content{padding:12px 16px 16px}.ggw-swap-choice{grid-template-columns:56px minmax(0,1fr);gap:12px;padding:10px}.ggw-swap-choice__thumb{width:56px;height:56px}}</style>';
+        echo '<style>.ggw-swap-modal-wrap{display:block}.ggw-swap-modal-trigger{display:inline-flex;align-items:center;justify-content:center;padding:0;border:0;background:none;color:#2563eb;font:inherit;font-weight:600;text-decoration:underline;cursor:pointer}.ggw-swap-modal-trigger:hover{color:#1d4ed8}.ggw-swap-modal-trigger:focus{outline:none;box-shadow:0 0 0 2px rgba(37,99,235,.22);border-radius:6px}.ggw-swap-modal{position:fixed;inset:0;display:none;z-index:9999}.ggw-swap-modal.is-open{display:grid;place-items:flex-start center;padding:4vh 16px;overflow:auto}.ggw-swap-modal__backdrop{position:fixed;inset:0;background:rgba(15,23,42,.58)}.ggw-swap-modal__panel{position:relative;background:#fff;width:min(760px,96vw);margin:0;border-radius:16px;box-shadow:0 30px 80px rgba(2,6,23,.33);display:flex;flex-direction:column;max-height:90vh;overflow:hidden;isolation:isolate}.ggw-swap-modal__header{padding:20px 24px 14px;border-bottom:1px solid #edf1f6;background:linear-gradient(180deg,#fff 0%,#f9fbff 100%);position:sticky;top:0;z-index:2}.ggw-swap-modal__title{margin:0;font-size:1.2rem;line-height:1.35;font-weight:700;color:#0f172a;padding-right:34px}.ggw-swap-modal__current{margin:8px 0 0;color:#0f172a;font-size:14px}.ggw-swap-modal__subtitle{margin:8px 0 0;color:#475569;font-size:13px;line-height:1.45}.ggw-swap-modal__content{padding:16px 24px 20px;overflow-y:auto;overscroll-behavior:contain}.ggw-swap-choice-list{margin:0;padding:0;list-style:none;display:grid;gap:12px}.ggw-swap-choice{display:grid;grid-template-columns:68px minmax(0,1fr);gap:14px;align-items:start;border:1px solid #e2e8f0;border-radius:12px;background:#fff;padding:12px;transition:border-color .15s ease,box-shadow .15s ease,transform .15s ease}.ggw-swap-choice:hover{border-color:#94a3b8;box-shadow:0 8px 18px rgba(15,23,42,.08)}.ggw-swap-choice:focus-within{border-color:#2563eb;box-shadow:0 0 0 2px rgba(37,99,235,.18)}.ggw-swap-choice__thumb-wrap{display:block}.ggw-swap-choice__thumb{width:64px;height:64px;border-radius:10px;display:block;object-fit:cover;background:#f1f5f9;border:1px solid #e2e8f0}.ggw-swap-choice__body{min-width:0;display:grid;gap:8px}.ggw-swap-choice__name{font-size:15px;line-height:1.4;font-weight:600;color:#0f172a}.ggw-swap-choice__meta{margin:0;color:#64748b;font-size:12px;line-height:1.4}.ggw-swap-choice__form{display:grid;gap:8px}.ggw-swap-choice__label{display:block;font-size:12px;font-weight:600;color:#334155}.ggw-swap-choice__select{width:100%;height:40px;border-radius:10px;border:1px solid #cbd5e1;padding:0 12px;background:#fff;color:#0f172a}.ggw-swap-choice__select:focus{outline:none;border-color:#2563eb;box-shadow:0 0 0 2px rgba(37,99,235,.2)}.ggw-swap-choice__btn.button.alt,.ggw-swap-choice__btn.button{width:100%;text-align:center;display:inline-flex;align-items:center;justify-content:center;min-height:40px;border-radius:10px;font-weight:600;background:#2563eb;border-color:#2563eb;color:#fff;transition:background .15s ease,border-color .15s ease,transform .12s ease}.ggw-swap-choice__btn.button.alt:hover,.ggw-swap-choice__btn.button:hover{background:#1d4ed8;border-color:#1d4ed8;color:#fff;transform:translateY(-1px)}.ggw-swap-choice__btn.button.alt:focus,.ggw-swap-choice__btn.button:focus{outline:none;box-shadow:0 0 0 2px rgba(37,99,235,.22)}.ggw-swap-modal__close{position:absolute;top:12px;right:12px;border:1px solid #d1d5db;background:#fff;font-size:24px;line-height:1;width:36px;height:36px;border-radius:999px;cursor:pointer;color:#475569;display:flex;align-items:center;justify-content:center;z-index:3;transition:background .15s ease,color .15s ease,border-color .15s ease}.ggw-swap-modal__close:hover{background:#f1f5f9;border-color:#94a3b8;color:#0f172a}.ggw-swap-modal__close:focus{outline:none;border-color:#2563eb;box-shadow:0 0 0 2px rgba(37,99,235,.22)}@media (max-width:767px){.ggw-swap-modal.is-open{padding:8px}.ggw-swap-modal__panel{width:100%;max-height:92vh;border-radius:14px}.ggw-swap-modal__header{padding:16px 16px 12px}.ggw-swap-modal__content{padding:12px 16px 16px}.ggw-swap-choice{grid-template-columns:56px minmax(0,1fr);gap:12px;padding:10px}.ggw-swap-choice__thumb{width:56px;height:56px}}</style>';
         echo '<script>(function(){if(window.__ggwSwapModalReady){return;}window.__ggwSwapModalReady=true;var state={lastTrigger:null};function getFocusable(modal){return Array.prototype.slice.call(modal.querySelectorAll("a[href],button:not([disabled]),textarea,input,select,[tabindex]:not([tabindex=\'-1\'])")).filter(function(el){return !el.hasAttribute("disabled")&&el.getAttribute("aria-hidden")!=="true";});}function closeModal(modal){if(!modal){return;}modal.classList.remove("is-open");modal.setAttribute("aria-hidden","true");if(state.lastTrigger&&typeof state.lastTrigger.focus==="function"){state.lastTrigger.focus();}state.lastTrigger=null;}function openModal(modal,trigger){if(!modal){return;}state.lastTrigger=trigger||null;modal.classList.add("is-open");modal.setAttribute("aria-hidden","false");var panel=modal.querySelector(".ggw-swap-modal__panel");if(panel&&typeof panel.focus==="function"){panel.focus();}}document.addEventListener("click",function(e){var open=e.target.closest(".ggw-open-swap-modal");if(open){e.preventDefault();var id=open.getAttribute("data-ggw-modal-id");var modal=id?document.getElementById(id):null;openModal(modal,open);return;}var closeTrigger=e.target.closest("[data-ggw-modal-close]");if(closeTrigger){closeModal(closeTrigger.closest(".ggw-swap-modal"));}});document.addEventListener("keydown",function(e){var active=document.querySelector(".ggw-swap-modal.is-open");if(!active){return;}if(e.key==="Escape"){e.preventDefault();closeModal(active);return;}if(e.key!=="Tab"){return;}var focusable=getFocusable(active);if(!focusable.length){return;}var first=focusable[0];var last=focusable[focusable.length-1];if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}});})();</script>';
     }
 
