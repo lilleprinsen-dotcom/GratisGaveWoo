@@ -2096,7 +2096,7 @@ GGWJS;
             $requested_qty = max(1, intval($_REQUEST['quantity'] ?? 1));
             $choice_slots = max($base_choice_slots, self::campaign_entitled_total($campaign, $requested_qty));
             if ($chooser_mode === 'progressive' && !empty($progressive_slides)) {
-                $step_count = min(count($progressive_slides), $choice_slots);
+                $step_count = $choice_slots;
                 $gift_card_layout = self::get_gift_card_layout($campaign);
                 $desktop_width = max(320, min(680, intval($gift_card_layout['max_grid_width'] ?? 560)));
                 echo '<style>.ggw-progressive{max-width:min(100%,' . esc_attr($desktop_width) . 'px);margin:0 auto}.ggw-progressive-progress{text-align:center;font-size:13px;font-weight:600;margin-bottom:10px}.ggw-progressive-track{position:relative;overflow:hidden}.ggw-progressive-slide{position:absolute;left:0;top:0;width:100%;opacity:0;pointer-events:none;transform:translateX(18px);transition:transform .28s ease,opacity .28s ease}.ggw-progressive-slide.is-active{position:relative;opacity:1;pointer-events:auto;transform:translateX(0)}.ggw-progressive-cards{display:grid;gap:10px}.ggw-progressive-card{border:1px solid #d1d5db;border-radius:12px;padding:12px;background:#fff;cursor:pointer;transition:border-color .2s,box-shadow .2s}.ggw-progressive-card.is-selected{border-color:#111827;box-shadow:0 0 0 1px #111827 inset}.ggw-progressive-card:focus-visible{outline:2px solid #111827;outline-offset:2px}.ggw-progressive-row{display:flex;align-items:center;gap:10px}.ggw-progressive-media{width:72px;height:72px;flex:0 0 72px;border-radius:10px;overflow:hidden;background:#f3f4f6}.ggw-progressive-media img{width:100%;height:100%;object-fit:cover}.ggw-progressive-title{font-size:14px;font-weight:600}.ggw-progressive-var{display:none;margin-top:8px}.ggw-progressive-card.is-selected .ggw-progressive-var{display:block}.ggw-progressive-controls{display:flex;justify-content:space-between;gap:10px;margin-top:12px}.ggw-progressive-btn{min-height:44px;padding:10px 14px;border-radius:10px;border:1px solid #d1d5db;background:#fff;font-weight:600}.ggw-progressive-btn--next{background:#111827;color:#fff;border-color:#111827}.ggw-progressive-btn:disabled{opacity:.45}.ggw-progressive-error{min-height:18px;font-size:12px;color:#b91c1c;margin-top:8px}@media (min-width:768px){.ggw-progressive-progress{text-align:left}}</style>';
@@ -2104,7 +2104,10 @@ GGWJS;
                 echo '<div class="ggw-progressive-progress" data-ggw-progressive-progress aria-live="polite"></div>';echo '<p style="font-size:12px;color:#374151;margin:0 0 10px;">Progressiv gavevelger: Du må velge alle gavene før du klikker "Legg i handlekurven".</p>';
                 echo '<div class="ggw-progressive-track">';
                 for ($step = 0; $step < $step_count; $step++) {
-                    $slide_ids = array_values(array_filter(array_map('absint', (array) ($progressive_slides[$step]['gift_ids'] ?? []))));
+                    $slide_ids = self::campaign_allowed_gift_ids_for_slot($campaign, $step);
+                    $slide_ids = array_values(array_filter(array_map('absint', (array) $slide_ids), function($gift_id) use ($gift_lookup) {
+                        return !empty($gift_lookup[$gift_id]);
+                    }));
                     if (empty($slide_ids)) continue;
                     echo '<section class="ggw-progressive-slide' . ($step === 0 ? ' is-active' : '') . '" data-ggw-progressive-slide data-step="' . esc_attr($step) . '" role="group" aria-label="Gavevalg ' . esc_attr($step + 1) . '">';
                     echo '<div class="ggw-progressive-cards" role="listbox">';
@@ -3682,14 +3685,16 @@ GGWJS;
                 ];
             }
 
-            $selected_count = count($selected_for_campaign);
-            if ($selected_count < 1) continue;
-
             $to_add = max(0, intval($row['missing_count'] ?? 0));
+            if ($to_add < 1) continue;
+            if (count($selected_for_campaign) !== $to_add) {
+                wc_add_notice(__('Velg alle manglende gaver i kassen før ordren kan fullføres.', 'ggw'), 'error');
+                continue;
+            }
 
             if ($to_add > 0 && $cart) {
                 for ($i = 0; $i < $to_add; $i++) {
-                    $choice = $selected_for_campaign[$i % $selected_count];
+                    $choice = $selected_for_campaign[$i];
                     $gift_parent_id = absint($choice['gift_parent_id']);
                     $gift_variation_id = absint($choice['gift_variation_id']);
                     $variation_attributes = $gift_variation_id ? self::get_variation_attributes_for_cart($gift_variation_id) : [];
