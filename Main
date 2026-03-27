@@ -2888,15 +2888,63 @@ GGWJS;
         }
         if (!$cart || $cart->is_empty()) return [];
 
-        $gift_count = 0;
-        foreach ($cart->get_cart() as $item) {
-            if (!self::cart_item_is_gift($item)) continue;
-            $gift_count += max(1, intval($item['quantity'] ?? 1));
-        }
-        if ($gift_count < 1) return [];
-
         $coupon_codes = array_values(array_filter(array_map('wc_clean', (array) $cart->get_applied_coupons())));
         if (empty($coupon_codes)) return [];
+
+        $cart_items = is_callable([$cart, 'get_cart']) ? (array) $cart->get_cart() : [];
+        if (empty($cart_items)) {
+            return [];
+        }
+
+        $gift_count = 0;
+        $gift_campaign_ids = [];
+        $trigger_campaign_ids = [];
+
+        foreach ($cart_items as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+
+            if (self::cart_item_is_gift($item)) {
+                $gift_count += max(1, intval($item['quantity'] ?? 1));
+                $campaign_id = sanitize_text_field($item['_ggw_campaign_id'] ?? '');
+                if ($campaign_id !== '') {
+                    $gift_campaign_ids[$campaign_id] = true;
+                }
+                continue;
+            }
+
+            $product_id = absint($item['variation_id'] ?? 0);
+            if (!$product_id) {
+                $product_id = absint($item['product_id'] ?? 0);
+            }
+            if (!$product_id) {
+                continue;
+            }
+
+            $campaign = self::get_best_campaign_for_product($product_id);
+            if (!$campaign || !self::campaign_active_now($campaign) || !empty($campaign['allow_with_coupons'])) {
+                continue;
+            }
+
+            if (!self::cart_item_counts_for_campaign_trigger($item, $campaign)) {
+                continue;
+            }
+
+            $campaign_id = sanitize_text_field($campaign['id'] ?? '');
+            if ($campaign_id !== '') {
+                $trigger_campaign_ids[$campaign_id] = true;
+            }
+        }
+
+        if ($gift_count < 1 || empty($gift_campaign_ids) || empty($trigger_campaign_ids)) {
+            return [];
+        }
+
+        $conflicting_campaign_ids = array_values(array_intersect(array_keys($gift_campaign_ids), array_keys($trigger_campaign_ids)));
+        if (empty($conflicting_campaign_ids)) {
+            return [];
+        }
 
         return [[
             'type' => 'coupon_gift_priority',
@@ -2904,6 +2952,7 @@ GGWJS;
             'priority' => self::COUPON_GIFT_PRIORITY,
             'coupon_codes' => $coupon_codes,
             'gift_line_count' => $gift_count,
+            'campaign_ids' => $conflicting_campaign_ids,
         ]];
     }
 
