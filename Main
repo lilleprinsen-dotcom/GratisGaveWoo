@@ -2226,7 +2226,7 @@ GGWJS;
 
         $requested_product = wc_get_product($product_id);
         if ($requested_product && $requested_product->is_type('variable') && !$variation_id) {
-            wc_add_notice(__('You must choose a size for this product before adding it to the cart.', 'ggw'), 'error');
+            wc_add_notice(__('Du må velge variant før du legger produktet i handlekurven.', 'ggw'), 'error');
             return false;
         }
 
