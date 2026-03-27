@@ -3577,23 +3577,18 @@ GGWJS;
                             if ($hint !== '') {
                                 $name .= '<p class="ggw-swap-choice__meta">' . esc_html($hint) . '</p>';
                             }
-                            $name .= '<form method="get" action="' . esc_url(wc_get_cart_url()) . '" class="ggw-swap-choice__form">';
-                            $name .= '<input type="hidden" name="ggw_action" value="swap_gift">';
-                            $name .= '<input type="hidden" name="ggw_gift_key" value="' . esc_attr($cart_item_key) . '">';
-                            $name .= '<input type="hidden" name="ggw_target_parent_id" value="' . esc_attr($target_parent_id) . '">';
-                            $name .= '<input type="hidden" name="_wpnonce" value="' . esc_attr(wp_create_nonce('ggw_swap_gift_' . sanitize_text_field((string) $cart_item_key))) . '">';
-                            $name .= '<label class="ggw-swap-choice__label" for="' . esc_attr($modal_id . '-' . $target_parent_id) . '">' . esc_html__('Velg variant', 'ggw') . '</label>';
-                            $name .= '<select id="' . esc_attr($modal_id . '-' . $target_parent_id) . '" class="ggw-swap-choice__select" name="ggw_target_variation_id" required aria-label="' . esc_attr(sprintf(__('Velg variant for %s', 'ggw'), $label)) . '">';
-                            $name .= '<option value="">' . esc_html__('Velg variant', 'ggw') . '</option>';
+                            $name .= '<div class="ggw-swap-choice__form">';
+                            $name .= '<span class="ggw-swap-choice__label">' . esc_html__('Velg variant', 'ggw') . '</span>';
+                            $name .= '<div style="display:grid;gap:6px;">';
                             foreach (($choice['variation_choices'] ?? []) as $variation_choice) {
                                 $variation_id = absint($variation_choice['gift_variation_id'] ?? 0);
                                 if (!$variation_id) continue;
                                 $variation_label = sanitize_text_field($variation_choice['label'] ?? '');
-                                $name .= '<option value="' . esc_attr($variation_id) . '">' . esc_html($variation_label) . '</option>';
+                                $swap_url = self::get_swap_gift_url($cart_item_key, $target_parent_id, $variation_id);
+                                $button_text = sprintf(__('Bytt til %s', 'ggw'), $variation_label !== '' ? $variation_label : __('valgt variant', 'ggw'));
+                                $name .= '<a class="button alt ggw-swap-choice__btn" href="' . esc_url($swap_url) . '" aria-label="' . esc_attr(sprintf(__('Bytt til variant %1$s av %2$s', 'ggw'), $variation_label, $label)) . '">' . esc_html($button_text) . '</a>';
                             }
-                            $name .= '</select>';
-                            $name .= '<button type="submit" class="button alt ggw-swap-choice__btn" aria-label="' . esc_attr(sprintf(__('Bytt til valgt variant av %s', 'ggw'), $label)) . '">' . esc_html__('Bytt til valgt variant', 'ggw') . '</button>';
-                            $name .= '</form>';
+                            $name .= '</div>';
                             $name .= '</div>';
                             $name .= '</li>';
                             continue;
