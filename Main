@@ -47,7 +47,6 @@ final class GGW_Free_Gift_Campaigns {
         add_filter('woocommerce_get_item_data', [__CLASS__, 'display_cart_item_meta'], 10, 2);
         add_action('woocommerce_remove_cart_item', [__CLASS__, 'cleanup_removed_trigger'], 10, 2);
         add_filter('woocommerce_cart_shipping_packages', [__CLASS__, 'filter_shipping_packages'], 20);
-        add_filter('woocommerce_shipping_free_shipping_is_available', [__CLASS__, 'filter_free_shipping_availability'], 20, 3);
         add_filter('woocommerce_coupon_is_valid_for_product', [__CLASS__, 'exclude_gifts_from_coupon_product_validation'], 20, 4);
         add_action('woocommerce_before_cart', [__CLASS__, 'render_cart_status_line'], 5);
         add_action('template_redirect', [__CLASS__, 'maybe_handle_swap_gift_action']);
@@ -2745,9 +2744,6 @@ GGWJS;
 
         foreach ($packages as $idx => $package) {
             if (empty($package['contents']) || !is_array($package['contents'])) continue;
-            if (!self::package_has_campaign_affected_items($package)) {
-                continue;
-            }
 
             $gift_total = 0.0;
             foreach ($package['contents'] as $item) {
@@ -2766,36 +2762,8 @@ GGWJS;
     }
 
     public static function filter_free_shipping_availability($is_available, $package, $shipping_method) {
-        if (!is_object($shipping_method) || empty($shipping_method->min_amount)) return $is_available;
-        if (!self::package_has_campaign_affected_items($package)) return $is_available;
-
-        $requires = $shipping_method->requires ?? '';
-        if (!in_array($requires, ['min_amount', 'either', 'both'], true)) return $is_available;
-
-        // For "either" (coupon OR amount), never force false because WooCommerce may
-        // already allow free shipping based on coupon requirements.
-        if ($requires === 'either') {
-            return $is_available;
-        }
-
-        // Align threshold checks with shipping package totals. Gift lines are already
-        // removed from package content cost in filter_shipping_packages().
-        //
-        // NOTE: WooCommerce stores contents_cost ex VAT. If the store evaluates free
-        // shipping threshold incl VAT, a cart like 1,799 (incl 25% VAT) becomes 1,439
-        // ex VAT and incorrectly fails a 1,500 threshold unless we add tax back in.
-        $package_contents_cost = floatval($package['contents_cost'] ?? 0);
-
-        if (function_exists('WC') && WC() && WC()->cart && WC()->cart->display_prices_including_tax()) {
-            $package_contents_cost += floatval($package['cart_contents_tax'] ?? 0);
-        }
-
-        $minimum_amount = floatval($shipping_method->min_amount);
-
-        if ($package_contents_cost < $minimum_amount) {
-            return false;
-        }
-
+        // Safety no-op: keep this method for backwards compatibility with existing
+        // snippets/hooks, but never override WooCommerce core free-shipping logic.
         return $is_available;
     }
 
@@ -2806,16 +2774,7 @@ GGWJS;
         }
 
         foreach ($contents as $item) {
-            if (self::cart_item_is_gift($item)) {
-                return true;
-            }
-
-            $candidate_id = absint($item['variation_id'] ?? 0);
-            if (!$candidate_id) {
-                $candidate_id = absint($item['product_id'] ?? 0);
-            }
-
-            if ($candidate_id && self::get_best_campaign_for_product($candidate_id)) {
+            if (self::should_exclude_gift_item_from_sums($item, 'shipping_package')) {
                 return true;
             }
         }
