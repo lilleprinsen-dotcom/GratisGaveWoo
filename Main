@@ -1707,7 +1707,133 @@ GGWJS;
 
         $variation = wc_get_product($gift_variation_id);
         if (!$variation || !$variation->is_type('variation')) return [];
-        return $variation->get_variation_attributes();
+        $attributes = [];
+        foreach ((array) $variation->get_variation_attributes() as $attr_key => $attr_value) {
+            $attr_key = sanitize_text_field((string) $attr_key);
+            $attr_value = sanitize_text_field((string) $attr_value);
+            if ($attr_key === '' || $attr_value === '') {
+                continue;
+            }
+            $attributes[$attr_key] = $attr_value;
+        }
+
+        return $attributes;
+    }
+
+    private static function get_validated_variation_attributes_for_add_to_cart($parent_product_id, $variation_id) {
+        $parent_product_id = absint($parent_product_id);
+        $variation_id = absint($variation_id);
+        if (!$parent_product_id || !$variation_id) {
+            return [];
+        }
+
+        $variation = wc_get_product($variation_id);
+        if (!$variation || !$variation->is_type('variation')) {
+            return [];
+        }
+        if (absint($variation->get_parent_id()) !== $parent_product_id) {
+            return [];
+        }
+
+        $attributes = self::get_variation_attributes_for_cart($variation_id);
+        $required = (array) wc_get_product_variation_attributes($variation_id);
+        foreach ($required as $required_key => $required_value) {
+            $required_key = sanitize_text_field((string) $required_key);
+            $required_value = sanitize_text_field((string) $required_value);
+            if ($required_key === '' || $required_value === '') {
+                continue;
+            }
+            $attributes[$required_key] = $required_value;
+        }
+
+        return $attributes;
+    }
+
+    private static function cart_item_has_valid_product_object($cart_item) {
+        if (!is_array($cart_item)) {
+            return false;
+        }
+
+        if (empty($cart_item['data']) || !is_object($cart_item['data']) || !($cart_item['data'] instanceof WC_Product)) {
+            return false;
+        }
+
+        $expected_id = absint($cart_item['variation_id'] ?? 0);
+        if (!$expected_id) {
+            $expected_id = absint($cart_item['product_id'] ?? 0);
+        }
+        if (!$expected_id) {
+            return false;
+        }
+
+        return absint($cart_item['data']->get_id()) === $expected_id;
+    }
+
+    private static function hydrate_cart_item_product_data($cart_item, $cart_item_key = '', $cart = null) {
+        if (!is_array($cart_item)) {
+            return [false, $cart_item];
+        }
+
+        if (self::cart_item_has_valid_product_object($cart_item)) {
+            return [true, $cart_item];
+        }
+
+        $target_id = absint($cart_item['variation_id'] ?? 0);
+        if (!$target_id) {
+            $target_id = absint($cart_item['product_id'] ?? 0);
+        }
+        if (!$target_id) {
+            self::log_swap_debug('Cart item missing target product id during hydration.', [
+                'cart_item_key' => $cart_item_key,
+                'cart_item' => $cart_item,
+            ]);
+            return [false, $cart_item];
+        }
+
+        $product = wc_get_product($target_id);
+        if (!$product || !($product instanceof WC_Product)) {
+            self::log_swap_debug('Failed hydrating cart item product object.', [
+                'cart_item_key' => $cart_item_key,
+                'target_id' => $target_id,
+                'cart_item' => $cart_item,
+            ]);
+            return [false, $cart_item];
+        }
+
+        $cart_item['data'] = $product;
+        if ($cart && $cart_item_key !== '' && isset($cart->cart_contents[$cart_item_key])) {
+            $cart->cart_contents[$cart_item_key]['data'] = $product;
+        }
+
+        return [true, $cart_item];
+    }
+
+    private static function sanitize_cart_contents_products($cart, $context = '') {
+        if (!$cart || empty($cart->cart_contents) || !is_array($cart->cart_contents)) {
+            return;
+        }
+
+        foreach (array_keys($cart->cart_contents) as $cart_item_key) {
+            if (!isset($cart->cart_contents[$cart_item_key]) || !is_array($cart->cart_contents[$cart_item_key])) {
+                continue;
+            }
+
+            $cart_item = $cart->cart_contents[$cart_item_key];
+            [$is_valid, $hydrated_item] = self::hydrate_cart_item_product_data($cart_item, $cart_item_key, $cart);
+            if ($is_valid) {
+                $cart->cart_contents[$cart_item_key] = $hydrated_item;
+                continue;
+            }
+
+            self::log_swap_debug('Removing malformed cart line with missing product object.', [
+                'context' => $context,
+                'cart_item_key' => $cart_item_key,
+                'is_gift' => self::cart_item_is_gift($cart_item),
+                'product_id' => absint($cart_item['product_id'] ?? 0),
+                'variation_id' => absint($cart_item['variation_id'] ?? 0),
+            ]);
+            $cart->remove_cart_item($cart_item_key);
+        }
     }
 
     private static function campaign_by_id($campaign_id) {
@@ -1955,6 +2081,7 @@ GGWJS;
 
         $cart = WC()->cart;
         if (!$cart || $cart->is_empty() || !method_exists($cart, 'add_to_cart')) return;
+        self::sanitize_cart_contents_products($cart, 'swap_request_start');
 
         try {
             $gift_key = sanitize_text_field(wp_unslash($_GET['ggw_gift_key'] ?? ''));
@@ -2063,7 +2190,12 @@ GGWJS;
                 exit;
             }
 
-            $variation_attributes = $new_variation_id ? self::get_variation_attributes_for_cart($new_variation_id) : [];
+            $variation_attributes = $new_variation_id ? self::get_validated_variation_attributes_for_add_to_cart($new_parent_id, $new_variation_id) : [];
+            if ($new_variation_id > 0 && empty($variation_attributes)) {
+                wc_add_notice(__('Valgt variant mangler gyldige attributter. Prøv igjen.', 'ggw'), 'error');
+                wp_safe_redirect(wc_get_cart_url());
+                exit;
+            }
             $add_data = self::mark_cart_item_as_gift(
                 [],
                 $campaign_id,
@@ -2089,13 +2221,23 @@ GGWJS;
             }
 
             $new_item = $cart->cart_contents[$new_key] ?? null;
+            [$new_item_valid, $new_item] = self::hydrate_cart_item_product_data($new_item, $new_key, $cart);
+            if (!$new_item_valid) {
+                $cart->remove_cart_item($new_key);
+                wc_add_notice(__('Kunne ikke oppdatere gave-linjen. Produktdata manglet etter bytte.', 'ggw'), 'error');
+                wp_safe_redirect(wc_get_cart_url());
+                exit;
+            }
+
             if (isset($new_item['data']) && is_object($new_item['data']) && method_exists($new_item['data'], 'set_price')) {
                 $new_item['data']->set_price(0);
             }
+            $cart->cart_contents[$new_key] = $new_item;
             $cart->set_quantity($new_key, 1, false);
 
             self::update_trigger_item_selection_after_swap($cart, $campaign_id, $current_parent_id, $current_variation_id, $new_parent_id, $new_variation_id, $slot_index);
             $cart->remove_cart_item($gift_key);
+            self::sanitize_cart_contents_products($cart, 'swap_before_calculate_totals');
             $cart->calculate_totals();
 
             wc_add_notice(__('Gratis gave oppdatert i handlekurven.', 'ggw'), 'success');
@@ -2933,6 +3075,15 @@ GGWJS;
         if (isset($session_data['_ggw_slot_index'])) {
             $session_data['_ggw_slot_index'] = max(0, intval($session_data['_ggw_slot_index']));
         }
+
+        if (self::cart_item_is_gift($session_data)) {
+            [$is_valid, $hydrated] = self::hydrate_cart_item_product_data($session_data, '', null);
+            if ($is_valid) {
+                $session_data = $hydrated;
+            } else {
+                $session_data['_ggw_invalid_gift_line'] = '1';
+            }
+        }
         return $session_data;
     }
 
@@ -3350,6 +3501,8 @@ GGWJS;
         if ($running) return;
         $running = true;
 
+        self::sanitize_cart_contents_products($cart, 'sync_start');
+
         $campaigns = self::get_campaigns();
         $campaign_index = [];
         foreach ($campaigns as $c) $campaign_index[$c['id']] = $c;
@@ -3358,7 +3511,17 @@ GGWJS;
         $gift_lines = []; // cart_item_key => item
 
         foreach ($cart->get_cart() as $key => $item) {
+            [$item_valid, $item] = self::hydrate_cart_item_product_data($item, $key, $cart);
+            if (!$item_valid) {
+                $cart->remove_cart_item($key);
+                continue;
+            }
+
             if (self::cart_item_is_gift($item)) {
+                if (!empty($item['_ggw_invalid_gift_line'])) {
+                    $cart->remove_cart_item($key);
+                    continue;
+                }
                 $gift_lines[$key] = $item;
                 continue;
             }
@@ -3496,10 +3659,18 @@ GGWJS;
 
                 if ($exists_key) {
                     // enforce price 0 and qty 1
-                    $gift_product = $cart->cart_contents[$exists_key]['data'];
-                    if ($gift_product) $gift_product->set_price(0);
-                    $cart->set_quantity($exists_key, 1, false);
-                    $kept_gift_lines[$exists_key] = true;
+                    $existing_item = $cart->cart_contents[$exists_key] ?? null;
+                    [$existing_valid, $existing_item] = self::hydrate_cart_item_product_data($existing_item, $exists_key, $cart);
+                    if (!$existing_valid) {
+                        $cart->remove_cart_item($exists_key);
+                    } else {
+                        $gift_product = $existing_item['data'] ?? null;
+                        if ($gift_product && is_object($gift_product) && method_exists($gift_product, 'set_price')) {
+                            $gift_product->set_price(0);
+                        }
+                        $cart->set_quantity($exists_key, 1, false);
+                        $kept_gift_lines[$exists_key] = true;
+                    }
                 } else {
                     $trigger_product_id = self::get_trigger_product_id_from_key($cart, $assigned_trigger_key);
                     if ($trigger_product_id < 1) {
@@ -3508,7 +3679,14 @@ GGWJS;
                     $add_data = self::mark_cart_item_as_gift([], $cid, $assigned_trigger_key, $trigger_product_id, 'Gratis gave', $gift_slot_index);
                     $new_key = $cart->add_to_cart($gift_parent_id, 1, $gift_variation_id, $variation_attributes, $add_data);
                     if ($new_key) {
-                        if (isset($cart->cart_contents[$new_key]['data'])) {
+                        $new_item = $cart->cart_contents[$new_key] ?? null;
+                        [$new_item_valid, $new_item] = self::hydrate_cart_item_product_data($new_item, $new_key, $cart);
+                        if (!$new_item_valid) {
+                            $cart->remove_cart_item($new_key);
+                            continue;
+                        }
+                        $cart->cart_contents[$new_key] = $new_item;
+                        if (isset($cart->cart_contents[$new_key]['data']) && is_object($cart->cart_contents[$new_key]['data']) && method_exists($cart->cart_contents[$new_key]['data'], 'set_price')) {
                             $cart->cart_contents[$new_key]['data']->set_price(0);
                         }
                         $cart->set_quantity($new_key, 1, false);
@@ -3525,7 +3703,14 @@ GGWJS;
             if (empty($kept_gift_lines[$gk])) {
                 $cart->remove_cart_item($gk);
             } else {
-                if (isset($cart->cart_contents[$gk]['data'])) {
+                $gift_item = $cart->cart_contents[$gk] ?? null;
+                [$gift_item_valid, $gift_item] = self::hydrate_cart_item_product_data($gift_item, $gk, $cart);
+                if (!$gift_item_valid) {
+                    $cart->remove_cart_item($gk);
+                    continue;
+                }
+                $cart->cart_contents[$gk] = $gift_item;
+                if (isset($cart->cart_contents[$gk]['data']) && is_object($cart->cart_contents[$gk]['data']) && method_exists($cart->cart_contents[$gk]['data'], 'set_price')) {
                     $cart->cart_contents[$gk]['data']->set_price(0);
                 }
                 $cart->set_quantity($gk, 1, false);
