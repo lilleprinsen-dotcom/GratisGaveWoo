@@ -2232,7 +2232,38 @@ GGWJS;
                     'quantity' => 1,
                 ] + (is_array($add_data) ? $add_data : []);
             }
+            $new_item['product_id'] = absint($new_item['product_id'] ?? $new_parent_id);
+            $new_item['variation_id'] = absint($new_item['variation_id'] ?? $new_variation_id);
+
             [$new_item_valid, $new_item] = self::hydrate_cart_item_product_data($new_item, $new_key, $cart);
+            if (!$new_item_valid) {
+                $fallback_ids = [];
+                $fallback_ids[] = absint($new_item['variation_id'] ?? 0);
+                $fallback_ids[] = absint($new_item['product_id'] ?? 0);
+                $fallback_ids[] = absint($new_variation_id);
+                $fallback_ids[] = absint($new_parent_id);
+                $fallback_ids = array_values(array_unique(array_filter($fallback_ids)));
+
+                foreach ($fallback_ids as $fallback_id) {
+                    $fallback_product = wc_get_product($fallback_id);
+                    if (!$fallback_product || !($fallback_product instanceof WC_Product)) {
+                        continue;
+                    }
+
+                    if ($fallback_product->is_type('variation')) {
+                        $new_item['variation_id'] = absint($fallback_product->get_id());
+                        $new_item['product_id'] = absint($fallback_product->get_parent_id());
+                    } else {
+                        $new_item['product_id'] = absint($fallback_product->get_id());
+                        if (!isset($new_item['variation_id']) || absint($new_item['variation_id']) <= 0) {
+                            $new_item['variation_id'] = 0;
+                        }
+                    }
+                    $new_item['data'] = $fallback_product;
+                    $new_item_valid = true;
+                    break;
+                }
+            }
             if (!$new_item_valid) {
                 $cart->remove_cart_item($new_key);
                 wc_add_notice(__('Kunne ikke oppdatere gave-linjen. Produktdata manglet etter bytte.', 'ggw'), 'error');
