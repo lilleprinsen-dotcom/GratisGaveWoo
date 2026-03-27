@@ -2079,7 +2079,9 @@ GGWJS;
 
         // If require choice, render gift grid with quantities.
         if (!empty($campaign['require_choice']) && empty($campaign['auto_gift'])) {
-            $choice_slots = max(1, intval($campaign['gifts_to_choose'] ?? 1));
+            $base_choice_slots = max(1, intval($campaign['gifts_to_choose'] ?? 1));
+            $requested_qty = max(1, intval($_REQUEST['quantity'] ?? 1));
+            $choice_slots = max($base_choice_slots, self::campaign_entitled_total($campaign, $requested_qty));
             if ($chooser_mode === 'progressive' && !empty($progressive_slides)) {
                 $step_count = min(count($progressive_slides), $choice_slots);
                 $gift_card_layout = self::get_gift_card_layout($campaign);
@@ -2130,7 +2132,7 @@ GGWJS;
                 echo '</div>';
                 return;
             }
-            echo '<p style="font-size:12px;color:#374151;margin:0 0 8px;">Velg totalt <strong>' . intval($choice_slots) . '</strong> gave(r). Trykk <strong>+</strong> for å legge til og <strong>−</strong> for å fjerne.</p>';
+            echo '<p style="font-size:12px;color:#374151;margin:0 0 8px;">Velg totalt <strong data-gift-required-count>' . intval($choice_slots) . '</strong> gave(r). Trykk <strong>+</strong> for å legge til og <strong>−</strong> for å fjerne.</p>';
 
             $gift_card_layout = self::get_gift_card_layout($campaign);
             $grid_min_width = max(80, intval($gift_card_layout['min_width'] ?? 120));
@@ -2150,8 +2152,9 @@ GGWJS;
                 $max_for_gift = self::get_per_product_limit_for_campaign($campaign, $gid);
                 if ($max_for_gift <= 0) {
                     $max_for_gift = $choice_slots;
+                } else {
+                    $max_for_gift = min($choice_slots, $max_for_gift);
                 }
-                $max_for_gift = min($choice_slots, $max_for_gift);
 
                 $image_id = $gp->get_image_id();
                 $image_html = $image_id
@@ -2168,7 +2171,7 @@ GGWJS;
                 echo '<span class="ggw-gift-stepper-value" data-gift-value>0</span>';
                 echo '<button type="button" class="ggw-gift-stepper-btn" data-gift-plus aria-label="Øk antall for ' . esc_attr($gp->get_name()) . '">+</button>';
                 echo '</div>';
-                echo '<input type="hidden" min="0" max="' . esc_attr($max_for_gift) . '" step="1" value="0" id="ggw_gift_qty_' . esc_attr($gid) . '" name="ggw_gift_qty[' . esc_attr($gid) . ']" data-gift-qty data-gift-id="' . esc_attr($gid) . '">';
+                echo '<input type="hidden" min="0" max="' . esc_attr($max_for_gift) . '" step="1" value="0" id="ggw_gift_qty_' . esc_attr($gid) . '" name="ggw_gift_qty[' . esc_attr($gid) . ']" data-gift-qty data-gift-id="' . esc_attr($gid) . '" data-gift-limit="' . esc_attr(self::get_per_product_limit_for_campaign($campaign, $gid)) . '">';
                 echo '</div>';
                 echo '<small class="ggw-gift-limit-note" data-gift-limit-note aria-live="polite"></small>';
 
@@ -2191,9 +2194,9 @@ GGWJS;
             }
             echo '</div>';
 
-            echo '<div class="ggw-gift-total" data-gift-total data-required="' . esc_attr($choice_slots) . '"></div>';
+            echo '<div class="ggw-gift-total" data-gift-total data-required="' . esc_attr($choice_slots) . '" data-base-required="' . esc_attr($base_choice_slots) . '" data-min-qty="' . esc_attr(max(1, intval($campaign['min_qty'] ?? 1))) . '"></div>';
 
-            echo '<script>(function(){var qtyInputs=document.querySelectorAll("[data-gift-qty]");if(!qtyInputs.length){return;}var totalEl=document.querySelector("[data-gift-total]");var parseIntSafe=function(v){var n=parseInt(v,10);return isNaN(n)?0:n;};var hideLimitNote=function(card){if(!card){return;}var note=card.querySelector("[data-gift-limit-note]");if(note){note.textContent="";note.classList.remove("is-visible");}};var showLimitNote=function(card,message){if(!card){return;}var note=card.querySelector("[data-gift-limit-note]");if(!note){return;}note.textContent=message;note.classList.add("is-visible");};var update=function(){var total=0;var required=totalEl?parseIntSafe(totalEl.getAttribute("data-required")):0;qtyInputs.forEach(function(input){var min=parseIntSafe(input.getAttribute("min"));var max=parseIntSafe(input.getAttribute("max"));var value=parseIntSafe(input.value);if(value<min){value=min;}if(max>0&&value>max){value=max;}input.value=value;total+=value;});qtyInputs.forEach(function(input){var min=parseIntSafe(input.getAttribute("min"));var value=parseIntSafe(input.value);var giftId=input.getAttribute("data-gift-id");var card=document.querySelector(".ggw-gift-card[data-gift-id=\""+giftId+"\"]");if(!card){return;}card.classList.toggle("is-selected",value>0);var valueEl=card.querySelector("[data-gift-value]");if(valueEl){valueEl.textContent=String(value);}var minusBtn=card.querySelector("[data-gift-minus]");if(minusBtn){minusBtn.disabled=value<=min;}var plusBtn=card.querySelector("[data-gift-plus]");if(plusBtn){var blocked=required>0&&total>=required&&value<=0;plusBtn.disabled=blocked;plusBtn.classList.toggle("is-blocked",blocked);}var overlay=card.querySelector("[data-gift-overlay]");if(overlay){overlay.textContent=value>0?"Valgt x"+value:"";}var variationWrap=card.querySelector(".ggw-gift-variation-wrap");if(variationWrap){variationWrap.style.display=value>0?"block":"none";if(value===0){var select=variationWrap.querySelector("select");if(select){select.selectedIndex=0;}}}});if(totalEl){if(total===required){totalEl.innerHTML="✅ Du har valgt riktig antall gaver ("+total+"/"+required+").";totalEl.style.color="#047857";}else if(total<required){totalEl.innerHTML="Velg "+(required-total)+" gave(r) til ("+total+"/"+required+").";totalEl.style.color="#374151";}else{totalEl.innerHTML="Du har valgt for mange gaver ("+total+"/"+required+"). Reduser antall før du legger i handlekurv.";totalEl.style.color="#b91c1c";}}};qtyInputs.forEach(function(input){var giftId=input.getAttribute("data-gift-id");var card=document.querySelector(".ggw-gift-card[data-gift-id=\""+giftId+"\"]");if(!card){return;}var plusBtn=card.querySelector("[data-gift-plus]");var minusBtn=card.querySelector("[data-gift-minus]");var step=function(delta){var min=parseIntSafe(input.getAttribute("min"));var max=parseIntSafe(input.getAttribute("max"));var value=parseIntSafe(input.value);var totalBefore=Array.prototype.reduce.call(qtyInputs,function(sum,el){return sum+parseIntSafe(el.value);},0);var required=totalEl?parseIntSafe(totalEl.getAttribute("data-required")):0;var next=value+delta;if(next<min){next=min;}if(delta>0&&max>0&&next>max){showLimitNote(card,"Du kan ikke velge mer enn "+max+" av denne gaven.");next=max;}else if(delta>0&&required>0&&totalBefore>=required){showLimitNote(card,"Du har allerede valgt maks antall gaver.");next=value;}else{hideLimitNote(card);}if(next!==value){input.value=String(next);}update();};if(plusBtn){plusBtn.addEventListener("click",function(){step(1);});}if(minusBtn){minusBtn.addEventListener("click",function(){step(-1);});}input.addEventListener("input",function(){hideLimitNote(card);update();});input.addEventListener("change",function(){hideLimitNote(card);update();});});update();})();</script>';
+            echo '<script>(function(){var qtyInputs=document.querySelectorAll("[data-gift-qty]");if(!qtyInputs.length){return;}var totalEl=document.querySelector("[data-gift-total]");var requiredCountEl=document.querySelector("[data-gift-required-count]");var qtyField=document.querySelector("form.cart input.qty[name=\"quantity\"]");var parseIntSafe=function(v){var n=parseInt(v,10);return isNaN(n)?0:n;};var hideLimitNote=function(card){if(!card){return;}var note=card.querySelector("[data-gift-limit-note]");if(note){note.textContent="";note.classList.remove("is-visible");}};var showLimitNote=function(card,message){if(!card){return;}var note=card.querySelector("[data-gift-limit-note]");if(!note){return;}note.textContent=message;note.classList.add("is-visible");};var getRequired=function(){if(!totalEl){return 0;}var baseRequired=parseIntSafe(totalEl.getAttribute("data-base-required"));var minQty=Math.max(1,parseIntSafe(totalEl.getAttribute("data-min-qty")));var requestedQty=qtyField?Math.max(1,parseIntSafe(qtyField.value||"1")):1;var hits=requestedQty>=minQty?Math.floor(requestedQty/minQty):0;return Math.max(baseRequired,hits*baseRequired);};var update=function(){var total=0;var required=getRequired();if(totalEl){totalEl.setAttribute("data-required",String(required));}if(requiredCountEl){requiredCountEl.textContent=String(required);}qtyInputs.forEach(function(input){var min=parseIntSafe(input.getAttribute("min"));var giftLimit=parseIntSafe(input.getAttribute("data-gift-limit"));var max=giftLimit>0?Math.min(required,giftLimit):required;input.setAttribute("max",String(max));var value=parseIntSafe(input.value);if(value<min){value=min;}if(max>0&&value>max){value=max;}input.value=value;total+=value;});qtyInputs.forEach(function(input){var min=parseIntSafe(input.getAttribute("min"));var value=parseIntSafe(input.value);var giftId=input.getAttribute("data-gift-id");var card=document.querySelector(".ggw-gift-card[data-gift-id=\""+giftId+"\"]");if(!card){return;}card.classList.toggle("is-selected",value>0);var valueEl=card.querySelector("[data-gift-value]");if(valueEl){valueEl.textContent=String(value);}var minusBtn=card.querySelector("[data-gift-minus]");if(minusBtn){minusBtn.disabled=value<=min;}var plusBtn=card.querySelector("[data-gift-plus]");if(plusBtn){var blocked=required>0&&total>=required&&value<=0;plusBtn.disabled=blocked;plusBtn.classList.toggle("is-blocked",blocked);}var overlay=card.querySelector("[data-gift-overlay]");if(overlay){overlay.textContent=value>0?"Valgt x"+value:"";}var variationWrap=card.querySelector(".ggw-gift-variation-wrap");if(variationWrap){variationWrap.style.display=value>0?"block":"none";if(value===0){var select=variationWrap.querySelector("select");if(select){select.selectedIndex=0;}}}});if(totalEl){if(total===required){totalEl.innerHTML="✅ Du har valgt riktig antall gaver ("+total+"/"+required+").";totalEl.style.color="#047857";}else if(total<required){totalEl.innerHTML="Velg "+(required-total)+" gave(r) til ("+total+"/"+required+").";totalEl.style.color="#374151";}else{totalEl.innerHTML="Du har valgt for mange gaver ("+total+"/"+required+"). Reduser antall før du legger i handlekurv.";totalEl.style.color="#b91c1c";}}};qtyInputs.forEach(function(input){var giftId=input.getAttribute("data-gift-id");var card=document.querySelector(".ggw-gift-card[data-gift-id=\""+giftId+"\"]");if(!card){return;}var plusBtn=card.querySelector("[data-gift-plus]");var minusBtn=card.querySelector("[data-gift-minus]");var step=function(delta){var min=parseIntSafe(input.getAttribute("min"));var max=parseIntSafe(input.getAttribute("max"));var value=parseIntSafe(input.value);var totalBefore=Array.prototype.reduce.call(qtyInputs,function(sum,el){return sum+parseIntSafe(el.value);},0);var required=getRequired();var next=value+delta;if(next<min){next=min;}if(delta>0&&max>0&&next>max){showLimitNote(card,"Du kan ikke velge mer enn "+max+" av denne gaven.");next=max;}else if(delta>0&&required>0&&totalBefore>=required){showLimitNote(card,"Du har allerede valgt maks antall gaver.");next=value;}else{hideLimitNote(card);}if(next!==value){input.value=String(next);}update();};if(plusBtn){plusBtn.addEventListener("click",function(){step(1);});}if(minusBtn){minusBtn.addEventListener("click",function(){step(-1);});}input.addEventListener("input",function(){hideLimitNote(card);update();});input.addEventListener("change",function(){hideLimitNote(card);update();});});if(qtyField){qtyField.addEventListener("input",update);qtyField.addEventListener("change",update);}update();})();</script>';
 
             echo '<input type="hidden" name="ggw_campaign_id" value="' . esc_attr($campaign['id']) . '">';
             echo '<p style="font-size:12px;color:#6b7280;margin-top:6px;">Vi bekrefter gavevalget ditt i handlekurv og checkout.</p>';
@@ -2326,15 +2329,6 @@ GGWJS;
         }
 
         if ($total_selected !== $required_count) {
-            if ($total_selected === $base_required && $required_count > $base_required && !empty($selected_gifts)) {
-                $seed = $selected_gifts;
-                $seed_count = count($seed);
-                for ($i = $seed_count; $i < $required_count; $i++) {
-                    $selected_gifts[] = $seed[$i % $seed_count];
-                }
-                return $selected_gifts;
-            }
-
             $error = sprintf(__('Du må velge nøyaktig %d gave(r) før du legger varen i handlekurven.', 'ggw'), $required_count);
             return null;
         }
