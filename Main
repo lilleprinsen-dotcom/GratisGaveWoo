@@ -303,7 +303,7 @@ final class GGW_Free_Gift_Campaigns {
 
         foreach ($slides as $slide_index => $slide) {
             if (!is_array($slide)) {
-                $errors[] = sprintf('Slide %d må være gyldig konfigurert.', intval($slide_index) + 1);
+                $errors[] = sprintf('Steg %d må være gyldig konfigurert.', intval($slide_index) + 1);
                 continue;
             }
 
@@ -322,12 +322,12 @@ final class GGW_Free_Gift_Campaigns {
             }
 
             if (empty($valid_ids)) {
-                $errors[] = sprintf('Slide %d må ha minst én gyldig gave fra gaveproduktene i kampanjen.', intval($slide_index) + 1);
+                $errors[] = sprintf('Steg %d må ha minst én gyldig gave fra gaveproduktene i kampanjen.', intval($slide_index) + 1);
             }
         }
 
-        if (count($slides) < $required_steps) {
-            $errors[] = sprintf('Progressiv flyt krever minst %d slides basert på valgt gaveantall.', $required_steps);
+        if (count($slides) < 1) {
+            $errors[] = 'Progressiv flyt krever minst ett steg med gyldig gavevalg.';
         }
 
         return $errors;
@@ -813,7 +813,7 @@ GGWCSS;
             progressiveBody.querySelectorAll('[data-ggw-slide-row]').forEach(function(row,index){
                 row.setAttribute('data-index',String(index));
                 var label=row.querySelector('[data-ggw-slide-label]');
-                if(label){label.textContent='Slide '+(index+1);} 
+                if(label){label.textContent='Steg '+(index+1);} 
                 row.querySelectorAll('[data-ggw-field="gift_ids"]').forEach(function(input){
                     input.name='progressive_slides['+index+'][gift_ids][]';
                 });
@@ -830,7 +830,7 @@ GGWCSS;
                 });
                 container.innerHTML='';
                 if(!pool.length){
-                    container.innerHTML='<p class="ggw-progressive-empty">Velg gaveprodukter over for å tilordne hva kunden kan se i hver slide.</p>';
+                    container.innerHTML='<p class="ggw-progressive-empty">Velg gaveprodukter over for å tilordne hva kunden kan se i hvert steg.</p>';
                     return;
                 }
                 var frag=document.createDocumentFragment();
@@ -890,7 +890,7 @@ GGWCSS;
                 if(issue){return;}
                 var checked=row.querySelectorAll('[data-ggw-field="gift_ids"]:checked');
                 if(!checked.length){
-                    issue='Slide '+(index+1)+' må ha minst én valgt gave.';
+                    issue='Steg '+(index+1)+' må ha minst én valgt gave.';
                 }
             });
             showValidationMessage(issue);
@@ -996,14 +996,20 @@ GGWJS;
         <div class="wrap">
             <h1>Gratis gave-kampanjer</h1>
             <p>Opprett eller rediger kampanjer. Høyere prioritet vinner ved overlapp.</p>
+            <?php if (!empty($_GET['ggw_notice']) && sanitize_key(wp_unslash($_GET['ggw_notice'])) === 'blocks_choice_fallback'): ?>
+                <div class="notice notice-warning inline">
+                    <p>Kampanjen ble lagret. Aktivt gavevalg i checkout-fallback støttes ikke i Checkout Blocks i denne versjonen. Gavevalg må derfor fullføres på produktsiden eller i handlekurven.</p>
+                </div>
+            <?php endif; ?>
 
             <?php if (!self::checkout_fallback_is_supported()): ?>
                 <div class="notice notice-warning inline">
                     <p>
-                        <strong>Kasse-fallback for gavevalg er deaktivert:</strong>
+                        <strong>Kasse-fallback for gavevalg er begrenset:</strong>
                         Aktiv checkout-modus er <em><?php echo esc_html(self::get_checkout_mode_label()); ?></em>,
-                        og fallback-funksjonen i denne versjonen støtter kun klassisk kasse
+                        og denne versjonen støtter aktivt gavevalg i fallback kun i klassisk checkout
                         (<code>woocommerce_review_order_before_payment</code> + <code>woocommerce_checkout_process</code>).
+                        I Checkout Blocks må kunden gjøre gavevalget på produktsiden eller i handlekurven.
                     </p>
                 </div>
             <?php endif; ?>
@@ -1031,24 +1037,24 @@ GGWJS;
                     <tr><th>Maks per spesifikk gave</th><td><?php self::render_gift_limits_fields($editing); ?><p class="description">Sett valgfri maksgrense per gaveprodukt i samme kampanje.</p></td></tr>
                     <tr><th>Hvor mange gaver kunden kan velge</th><td><input type="number" name="gifts_to_choose" value="<?php echo esc_attr($editing['gifts_to_choose']); ?>" min="1"> gave(r)<p class="description">Antall gavevalg per oppnådd "gave-runde".</p></td></tr>
                     <tr>
-                        <th>Gift chooser experience</th>
+                        <th>Gavevelger-opplevelse</th>
                         <td>
                             <select name="gift_chooser_mode">
-                                <option value="classic" <?php selected($editing['gift_chooser_mode'] ?? 'classic', 'classic'); ?>>Current chooser view</option>
-                                <option value="progressive" <?php selected($editing['gift_chooser_mode'] ?? 'classic', 'progressive'); ?>>Progressive flow view</option>
+                                <option value="classic" <?php selected($editing['gift_chooser_mode'] ?? 'classic', 'classic'); ?>>Klassisk gavevelger</option>
+                                <option value="progressive" <?php selected($editing['gift_chooser_mode'] ?? 'classic', 'progressive'); ?>>Progressiv stegvis gavevelger</option>
                             </select>
                             <p class="description">Velg hvordan gavevelgeren presenteres for kunden.</p>
                         </td>
                     </tr>
                     <tr data-ggw-progressive-wrap>
-                        <th>Progressive slides</th>
+                        <th>Progressive steg</th>
                         <td>
                             <div class="ggw-progressive-wrap">
                                 <table class="ggw-progressive-table widefat striped">
                                     <thead>
                                         <tr>
-                                            <th style="width:120px">Slide</th>
-                                            <th>Produkter i slide</th>
+                                            <th style="width:120px">Steg</th>
+                                            <th>Produkter i steg</th>
                                             <th style="width:180px">Handlinger</th>
                                         </tr>
                                     </thead>
@@ -1056,7 +1062,7 @@ GGWJS;
                                         <?php if (!empty($editing['progressive_slides'])): ?>
                                             <?php foreach ($editing['progressive_slides'] as $slide_index => $slide): ?>
                                                 <tr data-ggw-slide-row data-index="<?php echo esc_attr(intval($slide_index)); ?>">
-                                                    <td><strong data-ggw-slide-label><?php echo esc_html('Slide ' . (intval($slide_index) + 1)); ?></strong></td>
+                                                    <td><strong data-ggw-slide-label><?php echo esc_html('Steg ' . (intval($slide_index) + 1)); ?></strong></td>
                                                     <td>
                                                         <div class="ggw-progressive-choice-grid" data-ggw-slide-choices>
                                                             <?php foreach ((array) ($editing['gift_products'] ?? []) as $gift_id): ?>
@@ -1079,10 +1085,10 @@ GGWJS;
                                             <?php endforeach; ?>
                                         <?php else: ?>
                                             <tr data-ggw-slide-row data-index="0">
-                                                <td><strong data-ggw-slide-label>Slide 1</strong></td>
+                                                <td><strong data-ggw-slide-label>Steg 1</strong></td>
                                                 <td>
                                                     <div class="ggw-progressive-choice-grid" data-ggw-slide-choices>
-                                                        <p class="ggw-progressive-empty">Velg gaveprodukter over for å tilordne hva kunden kan se i hver slide.</p>
+                                                        <p class="ggw-progressive-empty">Velg gaveprodukter over for å tilordne hva kunden kan se i hvert steg.</p>
                                                     </div>
                                                 </td>
                                                 <td>
@@ -1096,14 +1102,14 @@ GGWJS;
                                         <?php endif; ?>
                                     </tbody>
                                 </table>
-                                <button type="button" class="button ggw-progressive-add" data-ggw-progressive-add>+ Legg til slide</button>
-                                <p class="description">Marker gavene som skal vises i hver slide. Bare produkter valgt i «Gaveprodukter kunden kan få» kan brukes her, og hver slide må ha minst ett valg.</p>
+                                <button type="button" class="button ggw-progressive-add" data-ggw-progressive-add>+ Legg til steg</button>
+                                <p class="description">Marker gavene som skal vises i hvert steg. Bare produkter valgt i «Gaveprodukter kunden kan få» kan brukes her, og hvert steg må ha minst ett valg. Hvis kunden kvalifiserer til flere gavevalg enn antall steg, starter steglisten på nytt i loop (steg 1, 2, 3, 1, 2 ...).</p>
                                 <script type="text/template" data-ggw-progressive-template>
                                     <tr data-ggw-slide-row data-index="__index__">
-                                        <td><strong data-ggw-slide-label>Slide __index__</strong></td>
+                                        <td><strong data-ggw-slide-label>Steg __index__</strong></td>
                                         <td>
                                             <div class="ggw-progressive-choice-grid" data-ggw-slide-choices>
-                                                <p class="ggw-progressive-empty">Velg gaveprodukter over for å tilordne hva kunden kan se i hver slide.</p>
+                                                <p class="ggw-progressive-empty">Velg gaveprodukter over for å tilordne hva kunden kan se i hvert steg.</p>
                                             </div>
                                         </td>
                                         <td>
@@ -1205,6 +1211,9 @@ GGWJS;
                     <tr><th>Maks antall ganger per kunde</th><td><input type="number" name="max_per_customer" value="<?php echo esc_attr($editing['max_per_customer']); ?>" min="0"><p class="description">0 = ingen begrensning. 1 = kunden kan bruke kampanjen én gang totalt.</p></td></tr>
                     <tr><th>Krever aktivt gavevalg</th><td><label><input type="checkbox" name="require_choice" value="1" <?php checked(!empty($editing['require_choice'])); ?>> Kunden må velge gave før checkout</label><p class="description">Skru av hvis du vil la kunden gå videre uten å velge gave.</p></td></tr>
                     <tr><th>Auto-legg til gave</th><td><label><input type="checkbox" name="auto_gift" value="1" <?php checked(!empty($editing['auto_gift'])); ?>> Legg til første tilgjengelige gave automatisk</label><p class="description">Nyttig hvis du vil gjøre flyten så enkel som mulig.</p></td></tr>
+                    <?php if (self::get_checkout_mode() === 'blocks'): ?>
+                        <tr><th>Merk ved Checkout Blocks</th><td><p class="description" style="margin:0;color:#92400e;">Når checkout kjører i Blocks, støttes ikke aktivt gavevalg via checkout-fallback i denne versjonen. For kampanjer med «Krever aktivt gavevalg» uten «Auto-legg til gave», må kunden velge gaver før checkout (produktside/handlekurv).</p></td></tr>
+                    <?php endif; ?>
                 </table>
 
                 <?php submit_button($edit_id ? 'Oppdater kampanje' : 'Lagre kampanje'); ?>
@@ -1411,7 +1420,7 @@ GGWJS;
             }
 
             if ($posted_chooser_mode === 'progressive' && $new['gift_chooser_mode'] !== 'progressive') {
-                add_action('admin_notices', function(){ echo '<div class="notice notice-warning"><p>Progressiv gavemodus ble deaktivert fordi ingen gyldige slides var definert. Kampanjen ble lagret i klassisk modus.</p></div>'; });
+                add_action('admin_notices', function(){ echo '<div class="notice notice-warning"><p>Progressiv gavemodus ble deaktivert fordi ingen gyldige steg var definert. Kampanjen ble lagret i klassisk modus.</p></div>'; });
             }
 
             $was_updated = false;
@@ -1433,7 +1442,11 @@ GGWJS;
             });
             update_option(self::OPT_KEY, $campaigns, false);
             self::soft_invalidate_cache();
-            wp_safe_redirect(admin_url('admin.php?page=ggw-free-gifts'));
+            $redirect_url = admin_url('admin.php?page=ggw-free-gifts');
+            if (self::get_checkout_mode() === 'blocks' && !empty($new['require_choice']) && empty($new['auto_gift'])) {
+                $redirect_url = add_query_arg('ggw_notice', 'blocks_choice_fallback', $redirect_url);
+            }
+            wp_safe_redirect($redirect_url);
             exit;
         }
 
@@ -2057,6 +2070,11 @@ GGWJS;
         $gift_ids = array_values(array_filter($campaign['gift_products'], [__CLASS__, 'gift_product_is_available']));
         if (empty($gift_ids)) return;
         $gift_lookup = array_fill_keys($gift_ids, true);
+        $requested_qty = self::get_requested_add_to_cart_quantity();
+        $target_id = $product->is_type('variation') ? $product->get_parent_id() : $product->get_id();
+        $target_variation_id = $product->is_type('variation') ? $product->get_id() : 0;
+        $projection = self::get_projected_campaign_trigger_state($campaign, WC()->cart, $target_id, $target_variation_id, $requested_qty);
+        $entitled_total = max(0, intval($projection['entitled_total'] ?? 0));
         $chooser_mode = self::sanitize_gift_chooser_mode($campaign['gift_chooser_mode'] ?? 'classic');
         $progressive_slides = [];
         if ($chooser_mode === 'progressive') {
@@ -2092,16 +2110,38 @@ GGWJS;
 
         // If require choice, render gift grid with quantities.
         if (!empty($campaign['require_choice']) && empty($campaign['auto_gift'])) {
-            $base_choice_slots = max(1, intval($campaign['gifts_to_choose'] ?? 1));
-            $requested_qty = max(1, intval($_REQUEST['quantity'] ?? 1));
-            $choice_slots = max($base_choice_slots, self::campaign_entitled_total($campaign, $requested_qty));
+            $choice_slots = $entitled_total;
+            $cart_totals = self::get_cart_campaign_trigger_totals($campaign, WC()->cart);
+            $incoming_item = [
+                'product_id' => absint($target_id),
+                'variation_id' => absint($target_variation_id),
+                'quantity' => 1,
+            ];
+            $incoming_counts_trigger = self::product_match_trigger($target_variation_id ? $target_variation_id : $target_id, $campaign)
+                && self::cart_item_counts_for_campaign_trigger($incoming_item, $campaign);
+            $incoming_unit_subtotal = $incoming_counts_trigger ? self::get_projected_line_subtotal_for_product($target_id, $target_variation_id, 1) : 0.0;
+            if ($choice_slots < 1) {
+                $missing_qty = max(0, intval($projection['missing_qty'] ?? 0));
+                $missing_subtotal = max(0.0, floatval($projection['missing_subtotal'] ?? 0.0));
+                $hints = [];
+                if ($missing_qty > 0) {
+                    $hints[] = 'legg til ' . $missing_qty . ' kvalifiserende vare' . ($missing_qty > 1 ? 'r' : '');
+                }
+                if ($missing_subtotal > 0) {
+                    $hints[] = 'mangler ' . wp_strip_all_tags(wc_price($missing_subtotal));
+                }
+                echo '<p style="font-size:13px;margin:0;">Gratis gave blir tilgjengelig når du ' . esc_html(!empty($hints) ? implode(' og ', $hints) : 'oppfyller kampanjekravene') . '.</p>';
+                echo '<input type="hidden" name="ggw_campaign_id" value="' . esc_attr($campaign['id']) . '">';
+                echo '</div>';
+                return;
+            }
             if ($chooser_mode === 'progressive' && !empty($progressive_slides)) {
                 $step_count = $choice_slots;
                 $gift_card_layout = self::get_gift_card_layout($campaign);
                 $desktop_width = max(320, min(680, intval($gift_card_layout['max_grid_width'] ?? 560)));
                 echo '<style>.ggw-progressive{max-width:min(100%,' . esc_attr($desktop_width) . 'px);margin:0 auto}.ggw-progressive-progress{text-align:center;font-size:13px;font-weight:600;margin-bottom:10px}.ggw-progressive-track{position:relative;overflow:hidden}.ggw-progressive-slide{position:absolute;left:0;top:0;width:100%;opacity:0;pointer-events:none;transform:translateX(18px);transition:transform .28s ease,opacity .28s ease}.ggw-progressive-slide.is-active{position:relative;opacity:1;pointer-events:auto;transform:translateX(0)}.ggw-progressive-cards{display:grid;gap:10px}.ggw-progressive-card{border:1px solid #d1d5db;border-radius:12px;padding:12px;background:#fff;cursor:pointer;transition:border-color .2s,box-shadow .2s}.ggw-progressive-card.is-selected{border-color:#111827;box-shadow:0 0 0 1px #111827 inset}.ggw-progressive-card:focus-visible{outline:2px solid #111827;outline-offset:2px}.ggw-progressive-row{display:flex;align-items:center;gap:10px}.ggw-progressive-media{width:72px;height:72px;flex:0 0 72px;border-radius:10px;overflow:hidden;background:#f3f4f6}.ggw-progressive-media img{width:100%;height:100%;object-fit:cover}.ggw-progressive-title{font-size:14px;font-weight:600}.ggw-progressive-var{display:none;margin-top:8px}.ggw-progressive-card.is-selected .ggw-progressive-var{display:block}.ggw-progressive-controls{display:flex;justify-content:space-between;gap:10px;margin-top:12px}.ggw-progressive-btn{min-height:44px;padding:10px 14px;border-radius:10px;border:1px solid #d1d5db;background:#fff;font-weight:600}.ggw-progressive-btn--next{background:#111827;color:#fff;border-color:#111827}.ggw-progressive-btn:disabled{opacity:.45}.ggw-progressive-error{min-height:18px;font-size:12px;color:#b91c1c;margin-top:8px}@media (min-width:768px){.ggw-progressive-progress{text-align:left}}</style>';
                 echo '<div class="ggw-progressive" data-ggw-progressive data-steps="' . esc_attr($step_count) . '">';
-                echo '<div class="ggw-progressive-progress" data-ggw-progressive-progress aria-live="polite"></div>';echo '<p style="font-size:12px;color:#374151;margin:0 0 10px;">Progressiv gavevelger: Du må velge alle gavene før du klikker "Legg i handlekurven".</p>';
+                echo '<div class="ggw-progressive-progress" data-ggw-progressive-progress aria-live="polite"></div>';echo '<p style="font-size:12px;color:#374151;margin:0 0 10px;">Progressiv gavevelger: Du må velge alle gavene før du klikker "Legg i handlekurven". Hvis du har flere gavevalg enn antall steg, gjenbrukes stegene i loop.</p>';
                 echo '<div class="ggw-progressive-track">';
                 for ($step = 0; $step < $step_count; $step++) {
                     $slide_ids = self::campaign_allowed_gift_ids_for_slot($campaign, $step);
@@ -2210,9 +2250,9 @@ GGWJS;
             }
             echo '</div>';
 
-            echo '<div class="ggw-gift-total" data-gift-total data-required="' . esc_attr($choice_slots) . '" data-base-required="' . esc_attr($base_choice_slots) . '" data-min-qty="' . esc_attr(max(1, intval($campaign['min_qty'] ?? 1))) . '"></div>';
+            echo '<div class="ggw-gift-total" data-gift-total data-required="' . esc_attr($choice_slots) . '" data-cart-qty="' . esc_attr(intval($cart_totals['qty'])) . '" data-cart-subtotal="' . esc_attr(wc_format_decimal($cart_totals['subtotal'], 6)) . '" data-item-counts="' . esc_attr($incoming_counts_trigger ? 1 : 0) . '" data-item-subtotal="' . esc_attr(wc_format_decimal($incoming_unit_subtotal, 6)) . '" data-min-qty="' . esc_attr(max(1, intval($campaign['min_qty'] ?? 1))) . '" data-min-subtotal="' . esc_attr(wc_format_decimal(max(0.0, floatval($campaign['min_subtotal'] ?? 0)), 6)) . '" data-gifts-per-hit="' . esc_attr(max(1, intval($campaign['gifts_to_choose'] ?? 1))) . '" data-max-per-order="' . esc_attr(max(0, intval($campaign['max_gifts_per_order'] ?? 0))) . '"></div>';
 
-            echo '<script>(function(){var qtyInputs=document.querySelectorAll("[data-gift-qty]");if(!qtyInputs.length){return;}var totalEl=document.querySelector("[data-gift-total]");var requiredCountEl=document.querySelector("[data-gift-required-count]");var qtyField=document.querySelector("form.cart input.qty[name=\"quantity\"]");var parseIntSafe=function(v){var n=parseInt(v,10);return isNaN(n)?0:n;};var hideLimitNote=function(card){if(!card){return;}var note=card.querySelector("[data-gift-limit-note]");if(note){note.textContent="";note.classList.remove("is-visible");}};var showLimitNote=function(card,message){if(!card){return;}var note=card.querySelector("[data-gift-limit-note]");if(!note){return;}note.textContent=message;note.classList.add("is-visible");};var getRequired=function(){if(!totalEl){return 0;}var baseRequired=parseIntSafe(totalEl.getAttribute("data-base-required"));var minQty=Math.max(1,parseIntSafe(totalEl.getAttribute("data-min-qty")));var requestedQty=qtyField?Math.max(1,parseIntSafe(qtyField.value||"1")):1;var hits=requestedQty>=minQty?Math.floor(requestedQty/minQty):0;return Math.max(baseRequired,hits*baseRequired);};var update=function(){var total=0;var required=getRequired();if(totalEl){totalEl.setAttribute("data-required",String(required));}if(requiredCountEl){requiredCountEl.textContent=String(required);}qtyInputs.forEach(function(input){var min=parseIntSafe(input.getAttribute("min"));var giftLimit=parseIntSafe(input.getAttribute("data-gift-limit"));var max=giftLimit>0?Math.min(required,giftLimit):required;input.setAttribute("max",String(max));var value=parseIntSafe(input.value);if(value<min){value=min;}if(max>0&&value>max){value=max;}input.value=value;total+=value;});qtyInputs.forEach(function(input){var min=parseIntSafe(input.getAttribute("min"));var value=parseIntSafe(input.value);var giftId=input.getAttribute("data-gift-id");var card=document.querySelector(".ggw-gift-card[data-gift-id=\""+giftId+"\"]");if(!card){return;}card.classList.toggle("is-selected",value>0);var valueEl=card.querySelector("[data-gift-value]");if(valueEl){valueEl.textContent=String(value);}var minusBtn=card.querySelector("[data-gift-minus]");if(minusBtn){minusBtn.disabled=value<=min;}var plusBtn=card.querySelector("[data-gift-plus]");if(plusBtn){var blocked=required>0&&total>=required&&value<=0;plusBtn.disabled=blocked;plusBtn.classList.toggle("is-blocked",blocked);}var overlay=card.querySelector("[data-gift-overlay]");if(overlay){overlay.textContent=value>0?"Valgt x"+value:"";}var variationWrap=card.querySelector(".ggw-gift-variation-wrap");if(variationWrap){variationWrap.style.display=value>0?"block":"none";if(value===0){var select=variationWrap.querySelector("select");if(select){select.selectedIndex=0;}}}});if(totalEl){if(total===required){totalEl.innerHTML="✅ Du har valgt riktig antall gaver ("+total+"/"+required+").";totalEl.style.color="#047857";}else if(total<required){totalEl.innerHTML="Velg "+(required-total)+" gave(r) til ("+total+"/"+required+").";totalEl.style.color="#374151";}else{totalEl.innerHTML="Du har valgt for mange gaver ("+total+"/"+required+"). Reduser antall før du legger i handlekurv.";totalEl.style.color="#b91c1c";}}};qtyInputs.forEach(function(input){var giftId=input.getAttribute("data-gift-id");var card=document.querySelector(".ggw-gift-card[data-gift-id=\""+giftId+"\"]");if(!card){return;}var plusBtn=card.querySelector("[data-gift-plus]");var minusBtn=card.querySelector("[data-gift-minus]");var step=function(delta){var min=parseIntSafe(input.getAttribute("min"));var max=parseIntSafe(input.getAttribute("max"));var value=parseIntSafe(input.value);var totalBefore=Array.prototype.reduce.call(qtyInputs,function(sum,el){return sum+parseIntSafe(el.value);},0);var required=getRequired();var next=value+delta;if(next<min){next=min;}if(delta>0&&max>0&&next>max){showLimitNote(card,"Du kan ikke velge mer enn "+max+" av denne gaven.");next=max;}else if(delta>0&&required>0&&totalBefore>=required){showLimitNote(card,"Du har allerede valgt maks antall gaver.");next=value;}else{hideLimitNote(card);}if(next!==value){input.value=String(next);}update();};if(plusBtn){plusBtn.addEventListener("click",function(){step(1);});}if(minusBtn){minusBtn.addEventListener("click",function(){step(-1);});}input.addEventListener("input",function(){hideLimitNote(card);update();});input.addEventListener("change",function(){hideLimitNote(card);update();});});if(qtyField){qtyField.addEventListener("input",update);qtyField.addEventListener("change",update);}update();})();</script>';
+            echo '<script>(function(){var qtyInputs=document.querySelectorAll("[data-gift-qty]");if(!qtyInputs.length){return;}var totalEl=document.querySelector("[data-gift-total]");var requiredCountEl=document.querySelector("[data-gift-required-count]");var qtyField=document.querySelector("form.cart input.qty[name=\"quantity\"]");var parseIntSafe=function(v){var n=parseInt(v,10);return isNaN(n)?0:n;};var parseFloatSafe=function(v){var n=parseFloat(v);return isNaN(n)?0:n;};var hideLimitNote=function(card){if(!card){return;}var note=card.querySelector("[data-gift-limit-note]");if(note){note.textContent="";note.classList.remove("is-visible");}};var showLimitNote=function(card,message){if(!card){return;}var note=card.querySelector("[data-gift-limit-note]");if(!note){return;}note.textContent=message;note.classList.add("is-visible");};var getRequired=function(){if(!totalEl){return 0;}var cartQty=parseIntSafe(totalEl.getAttribute("data-cart-qty"));var cartSubtotal=parseFloatSafe(totalEl.getAttribute("data-cart-subtotal"));var itemCounts=parseIntSafe(totalEl.getAttribute("data-item-counts"))>0;var itemSubtotal=parseFloatSafe(totalEl.getAttribute("data-item-subtotal"));var minQty=Math.max(1,parseIntSafe(totalEl.getAttribute("data-min-qty")));var minSubtotal=Math.max(0,parseFloatSafe(totalEl.getAttribute("data-min-subtotal")));var giftsPerHit=Math.max(1,parseIntSafe(totalEl.getAttribute("data-gifts-per-hit")));var maxPerOrder=Math.max(0,parseIntSafe(totalEl.getAttribute("data-max-per-order")));var requestedQty=qtyField?Math.max(1,parseIntSafe(qtyField.value||\"1\")):1;var totalQty=cartQty+(itemCounts?requestedQty:0);var totalSubtotal=cartSubtotal+(itemCounts?(itemSubtotal*requestedQty):0);if(totalQty<minQty||totalSubtotal<minSubtotal){return 0;}var hits=Math.floor(totalQty/minQty);var required=Math.max(0,hits*giftsPerHit);if(maxPerOrder>0&&required>maxPerOrder){required=maxPerOrder;}if(totalEl){totalEl.setAttribute(\"data-required\",String(required));}return required;};var update=function(){var total=0;var required=getRequired();if(requiredCountEl){requiredCountEl.textContent=String(required);}qtyInputs.forEach(function(input){var min=parseIntSafe(input.getAttribute("min"));var giftLimit=parseIntSafe(input.getAttribute("data-gift-limit"));var max=giftLimit>0?Math.min(required,giftLimit):required;input.setAttribute("max",String(max));var value=parseIntSafe(input.value);if(value<min){value=min;}if(max>0&&value>max){value=max;}input.value=value;total+=value;});qtyInputs.forEach(function(input){var min=parseIntSafe(input.getAttribute("min"));var value=parseIntSafe(input.value);var giftId=input.getAttribute("data-gift-id");var card=document.querySelector(".ggw-gift-card[data-gift-id=\""+giftId+"\"]");if(!card){return;}card.classList.toggle("is-selected",value>0);var valueEl=card.querySelector("[data-gift-value]");if(valueEl){valueEl.textContent=String(value);}var minusBtn=card.querySelector("[data-gift-minus]");if(minusBtn){minusBtn.disabled=value<=min;}var plusBtn=card.querySelector("[data-gift-plus]");if(plusBtn){var blocked=required>0&&total>=required&&value<=0;plusBtn.disabled=blocked;plusBtn.classList.toggle("is-blocked",blocked);}var overlay=card.querySelector("[data-gift-overlay]");if(overlay){overlay.textContent=value>0?"Valgt x"+value:"";}var variationWrap=card.querySelector(".ggw-gift-variation-wrap");if(variationWrap){variationWrap.style.display=value>0?"block":"none";if(value===0){var select=variationWrap.querySelector("select");if(select){select.selectedIndex=0;}}}});if(totalEl){if(required<1){totalEl.innerHTML="Legg til flere kvalifiserende varer for å aktivere gavevalg.";totalEl.style.color="#374151";}else if(total===required){totalEl.innerHTML="✅ Du har valgt riktig antall gaver ("+total+"/"+required+").";totalEl.style.color="#047857";}else if(total<required){totalEl.innerHTML="Velg "+(required-total)+" gave(r) til ("+total+"/"+required+").";totalEl.style.color="#374151";}else{totalEl.innerHTML="Du har valgt for mange gaver ("+total+"/"+required+"). Reduser antall før du legger i handlekurv.";totalEl.style.color="#b91c1c";}}};qtyInputs.forEach(function(input){var giftId=input.getAttribute("data-gift-id");var card=document.querySelector(".ggw-gift-card[data-gift-id=\""+giftId+"\"]");if(!card){return;}var plusBtn=card.querySelector("[data-gift-plus]");var minusBtn=card.querySelector("[data-gift-minus]");var step=function(delta){var min=parseIntSafe(input.getAttribute("min"));var max=parseIntSafe(input.getAttribute("max"));var value=parseIntSafe(input.value);var totalBefore=Array.prototype.reduce.call(qtyInputs,function(sum,el){return sum+parseIntSafe(el.value);},0);var required=getRequired();var next=value+delta;if(next<min){next=min;}if(delta>0&&max>0&&next>max){showLimitNote(card,"Du kan ikke velge mer enn "+max+" av denne gaven.");next=max;}else if(delta>0&&required>0&&totalBefore>=required){showLimitNote(card,"Du har allerede valgt maks antall gaver.");next=value;}else{hideLimitNote(card);}if(next!==value){input.value=String(next);}update();};if(plusBtn){plusBtn.addEventListener("click",function(){step(1);});}if(minusBtn){minusBtn.addEventListener("click",function(){step(-1);});}input.addEventListener("input",function(){hideLimitNote(card);update();});input.addEventListener("change",function(){hideLimitNote(card);update();});});if(qtyField){qtyField.addEventListener("input",update);qtyField.addEventListener("change",update);}update();})();</script>';
 
             echo '<input type="hidden" name="ggw_campaign_id" value="' . esc_attr($campaign['id']) . '">';
             echo '<p style="font-size:12px;color:#6b7280;margin-top:6px;">Vi bekrefter gavevalget ditt i handlekurv og checkout.</p>';
@@ -2248,8 +2288,13 @@ GGWJS;
 
         // Required choice validation
         if (!empty($campaign['require_choice']) && empty($campaign['auto_gift'])) {
+            $projection = self::get_projected_campaign_trigger_state($campaign, WC()->cart, $product_id, $variation_id, $quantity);
+            $required_count = max(0, intval($projection['entitled_total'] ?? 0));
+            if ($required_count < 1) {
+                return $passed;
+            }
             $validation_error = '';
-            $selected_gifts = self::collect_selected_gifts_from_request($campaign, WC()->cart, $validation_error, $quantity);
+            $selected_gifts = self::collect_selected_gifts_from_request($campaign, WC()->cart, $validation_error, $required_count, $product_id, $variation_id, $quantity);
             if ($selected_gifts === null) {
                 wc_add_notice($validation_error ?: __('Velg gyldige gaver før du legger varen i handlekurven.', 'ggw'), 'error');
                 return false;
@@ -2267,8 +2312,11 @@ GGWJS;
         $cart_item_data['_ggw_campaign_id'] = $campaign['id'];
         $cart_item_data['_ggw_trigger_parent'] = self::product_parent_id($target_id);
 
+        $projection = self::get_projected_campaign_trigger_state($campaign, WC()->cart, $product_id, $variation_id, $quantity);
+        $required_count = max(0, intval($projection['entitled_total'] ?? 0));
+
         $empty_error = '';
-        $selected_gifts = self::collect_selected_gifts_from_request($campaign, WC()->cart, $empty_error, $quantity);
+        $selected_gifts = self::collect_selected_gifts_from_request($campaign, WC()->cart, $empty_error, $required_count, $product_id, $variation_id, $quantity);
 
         if (!empty($selected_gifts)) {
             $cart_item_data['_ggw_selected_gifts'] = $selected_gifts;
@@ -2282,19 +2330,26 @@ GGWJS;
         return $cart_item_data;
     }
 
-    private static function collect_selected_gifts_from_request($campaign, $cart = null, &$error = '', $requested_qty = null) {
+    private static function collect_selected_gifts_from_request($campaign, $cart = null, &$error = '', $required_count = null, $product_id = 0, $variation_id = 0, $requested_qty = null) {
         $chooser_mode = self::sanitize_gift_chooser_mode($campaign['gift_chooser_mode'] ?? 'classic');
         if ($chooser_mode === 'progressive') {
-            return self::collect_progressive_selected_gifts_from_request($campaign, $cart, $error);
+            return self::collect_progressive_selected_gifts_from_request($campaign, $cart, $error, $required_count, $product_id, $variation_id, $requested_qty);
         }
 
-        return self::collect_classic_selected_gifts_from_request($campaign, $cart, $error, $requested_qty);
+        return self::collect_classic_selected_gifts_from_request($campaign, $cart, $error, $required_count, $product_id, $variation_id, $requested_qty);
     }
 
-    private static function collect_classic_selected_gifts_from_request($campaign, $cart = null, &$error = '', $requested_qty = null) {
-        $base_required = max(1, intval($campaign['gifts_to_choose'] ?? 1));
-        $requested_qty = $requested_qty === null ? max(1, intval($_REQUEST['quantity'] ?? 1)) : max(1, intval($requested_qty));
-        $required_count = max($base_required, self::campaign_entitled_total($campaign, $requested_qty));
+    private static function collect_classic_selected_gifts_from_request($campaign, $cart = null, &$error = '', $required_count = null, $product_id = 0, $variation_id = 0, $requested_qty = null) {
+        if ($required_count === null) {
+            $requested_qty = self::get_requested_add_to_cart_quantity($requested_qty);
+            $projection = self::get_projected_campaign_trigger_state($campaign, $cart ?: WC()->cart, $product_id, $variation_id, $requested_qty);
+            $required_count = max(0, intval($projection['entitled_total'] ?? 0));
+        } else {
+            $required_count = max(0, intval($required_count));
+        }
+        if ($required_count < 1) {
+            return [];
+        }
         $posted_qty = $_POST['ggw_gift_qty'] ?? [];
         $gift_variation_map = $_POST['ggw_gift_variation_id'] ?? [];
 
@@ -2352,8 +2407,11 @@ GGWJS;
         return $selected_gifts;
     }
 
-    private static function collect_progressive_selected_gifts_from_request($campaign, $cart = null, &$error = '') {
-        $required_count = self::required_progressive_selection_count($campaign);
+    private static function collect_progressive_selected_gifts_from_request($campaign, $cart = null, &$error = '', $required_count = null, $product_id = 0, $variation_id = 0, $requested_qty = null) {
+        $required_count = self::required_progressive_selection_count($campaign, $cart, $required_count, $product_id, $variation_id, $requested_qty);
+        if ($required_count < 1) {
+            return [];
+        }
         $choices_by_step = $_POST['ggw_progressive_choice'] ?? [];
         $variation_by_step = $_POST['ggw_progressive_variation_id'] ?? ($_POST['ggw_progressive_choice_variation'] ?? []);
 
@@ -2423,15 +2481,14 @@ GGWJS;
         return $selected_gifts;
     }
 
-    private static function required_progressive_selection_count($campaign) {
-        $base_required = max(1, intval($campaign['gifts_to_choose'] ?? 1));
-        $requested_qty = max(1, intval($_REQUEST['quantity'] ?? 1));
-        $entitled_total = self::campaign_entitled_total($campaign, $requested_qty);
-        if ($entitled_total > 0) {
-            $base_required = $entitled_total;
+    private static function required_progressive_selection_count($campaign, $cart = null, $required_count = null, $product_id = 0, $variation_id = 0, $requested_qty = null) {
+        if ($required_count !== null) {
+            return max(0, intval($required_count));
         }
 
-        return $base_required;
+        $requested_qty = self::get_requested_add_to_cart_quantity($requested_qty);
+        $projection = self::get_projected_campaign_trigger_state($campaign, $cart ?: WC()->cart, $product_id, $variation_id, $requested_qty);
+        return max(0, intval($projection['entitled_total'] ?? 0));
     }
 
     /* =========================
@@ -2538,7 +2595,14 @@ GGWJS;
         // Campaign entitlement scales per qualifying item/hit.
         // Example: 2 eligible items with 4 gifts each => 8 gifts.
         $gifts_to_choose = max(1, intval($campaign['gifts_to_choose'] ?? 1));
-        return max(0, $rule_hits * $gifts_to_choose);
+        $entitled = max(0, $rule_hits * $gifts_to_choose);
+
+        $max_per_order = max(0, intval($campaign['max_gifts_per_order'] ?? 0));
+        if ($max_per_order > 0) {
+            $entitled = min($entitled, $max_per_order);
+        }
+
+        return $entitled;
     }
 
     private static function get_campaign_gift_limits($campaign) {
@@ -3030,6 +3094,86 @@ GGWJS;
         return ['qualifies' => true, 'entitled_total' => $entitled_total, 'missing_qty' => 0, 'missing_subtotal' => 0.0, 'blocked' => false];
     }
 
+    private static function get_requested_add_to_cart_quantity($requested_qty = null) {
+        if ($requested_qty !== null) {
+            return max(1, intval($requested_qty));
+        }
+        return max(1, intval($_REQUEST['quantity'] ?? 1));
+    }
+
+    private static function get_projected_line_subtotal_for_product($product_id, $variation_id, $quantity) {
+        $product_id = absint($product_id);
+        $variation_id = absint($variation_id);
+        $quantity = max(1, intval($quantity));
+
+        $target_id = $variation_id ? $variation_id : $product_id;
+        $product = wc_get_product($target_id);
+        if (!$product) {
+            return 0.0;
+        }
+
+        if (function_exists('wc_get_price_excluding_tax')) {
+            return max(0.0, floatval(wc_get_price_excluding_tax($product, ['qty' => $quantity])));
+        }
+
+        return max(0.0, floatval($product->get_price()) * $quantity);
+    }
+
+    private static function get_cart_campaign_trigger_totals($campaign, $cart) {
+        $qty_total = 0;
+        $subtotal_total = 0.0;
+
+        if ($cart && is_callable([$cart, 'get_cart']) && !$cart->is_empty()) {
+            foreach ((array) $cart->get_cart() as $item) {
+                if (self::cart_item_is_gift($item)) continue;
+
+                $item_product_id = !empty($item['variation_id']) ? absint($item['variation_id']) : absint($item['product_id'] ?? 0);
+                if (!$item_product_id) continue;
+                if (!self::product_match_trigger($item_product_id, $campaign)) continue;
+                if (!self::cart_item_counts_for_campaign_trigger($item, $campaign)) continue;
+
+                $qty_total += max(0, intval($item['quantity'] ?? 0));
+                $subtotal_total += max(0.0, floatval($item['line_subtotal'] ?? 0.0));
+            }
+        }
+
+        return [
+            'qty' => $qty_total,
+            'subtotal' => max(0.0, $subtotal_total),
+        ];
+    }
+
+    private static function get_projected_campaign_trigger_totals($campaign, $cart, $product_id, $variation_id = 0, $requested_qty = 1) {
+        $totals = self::get_cart_campaign_trigger_totals($campaign, $cart);
+        $qty_total = intval($totals['qty']);
+        $subtotal_total = floatval($totals['subtotal']);
+
+        $requested_qty = max(1, intval($requested_qty));
+        $target_id = absint($variation_id ? $variation_id : $product_id);
+        if ($target_id && self::product_match_trigger($target_id, $campaign)) {
+            $incoming_item = [
+                'product_id' => absint($product_id),
+                'variation_id' => absint($variation_id),
+                'quantity' => $requested_qty,
+            ];
+            if (self::cart_item_counts_for_campaign_trigger($incoming_item, $campaign)) {
+                $qty_total += $requested_qty;
+                $subtotal_total += self::get_projected_line_subtotal_for_product($product_id, $variation_id, $requested_qty);
+            }
+        }
+
+        return [
+            'qty' => $qty_total,
+            'subtotal' => max(0.0, $subtotal_total),
+        ];
+    }
+
+    private static function get_projected_campaign_trigger_state($campaign, $cart, $product_id, $variation_id = 0, $requested_qty = 1) {
+        $totals = self::get_projected_campaign_trigger_totals($campaign, $cart, $product_id, $variation_id, $requested_qty);
+        $campaign_id = sanitize_text_field($campaign['id'] ?? '');
+        return self::evaluate_campaign_trigger_state($campaign, $totals['qty'], $totals['subtotal'], $campaign_id);
+    }
+
     private static function get_cart_campaign_status_rows() {
         $cart = WC()->cart;
         if (!$cart || $cart->is_empty()) return [];
@@ -3233,7 +3377,8 @@ GGWJS;
             if (empty($selected)) continue;
 
             $desired = array_slice($selected, 0, $entitled_total);
-            if (count($desired) < $entitled_total) {
+            $allow_hidden_fill = (empty($c['require_choice']) || !empty($c['auto_gift']));
+            if ($allow_hidden_fill && count($desired) < $entitled_total) {
                 $selected_count = count($selected);
                 for ($i = count($desired); $i < $entitled_total; $i++) {
                     $desired[] = $selected[$i % $selected_count];
