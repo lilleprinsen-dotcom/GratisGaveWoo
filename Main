@@ -3071,47 +3071,42 @@ GGWJS;
         $rows = self::get_cart_campaign_status_rows();
         if (empty($rows)) return;
 
-        $selected = null;
         foreach ($rows as $row) {
-            if (empty($row['trigger_state']['blocked'])) {
-                $selected = $row;
-                break;
+            if (!empty($row['trigger_state']['blocked'])) continue;
+
+            $trigger_state = $row['trigger_state'];
+            $campaign_title = sanitize_text_field($row['campaign']['title'] ?? '');
+
+            $message = '';
+            $style = 'background:#f9fafb;border:1px solid #e5e7eb;color:#1f2937;';
+            if (!empty($trigger_state['qualifies'])) {
+                $message = 'Gratis gave er klar' . ($campaign_title ? ': ' . $campaign_title : '') . '.';
+                $style = 'background:#f0fdf4;border:1px solid #86efac;color:#166534;';
+            } else {
+                $steps = [];
+                $missing_qty = max(0, intval($trigger_state['missing_qty'] ?? 0));
+                $missing_subtotal = max(0.0, floatval($trigger_state['missing_subtotal'] ?? 0.0));
+
+                if ($missing_qty > 0) {
+                    $steps[] = 'legg til ' . $missing_qty . ' kvalifiserende vare' . ($missing_qty > 1 ? 'r' : '');
+                }
+
+                if ($missing_subtotal > 0.0) {
+                    $remaining_amount = wp_strip_all_tags(wc_price($missing_subtotal));
+                    $steps[] = 'mangler ' . $remaining_amount;
+                }
+
+                if (!empty($steps)) {
+                    $message = 'For å få gratis gave: ' . implode(' og ', $steps) . '.';
+                }
             }
+
+            if ($message === '') continue;
+
+            echo '<div class="ggw-cart-status-line" style="margin:0 0 16px;padding:10px 12px;border-radius:8px;font-size:14px;font-weight:600;' . esc_attr($style) . '">';
+            echo esc_html($message);
+            echo '</div>';
         }
-        if (!$selected) return;
-
-        $trigger_state = $selected['trigger_state'];
-        $campaign_title = sanitize_text_field($selected['campaign']['title'] ?? '');
-
-        $message = '';
-        $style = 'background:#f9fafb;border:1px solid #e5e7eb;color:#1f2937;';
-        if (!empty($trigger_state['qualifies'])) {
-            $message = 'Gratis gave er klar' . ($campaign_title ? ': ' . $campaign_title : '') . '.';
-            $style = 'background:#f0fdf4;border:1px solid #86efac;color:#166534;';
-        } else {
-            $steps = [];
-            $missing_qty = max(0, intval($trigger_state['missing_qty'] ?? 0));
-            $missing_subtotal = max(0.0, floatval($trigger_state['missing_subtotal'] ?? 0.0));
-
-            if ($missing_qty > 0) {
-                $steps[] = 'legg til ' . $missing_qty . ' kvalifiserende vare' . ($missing_qty > 1 ? 'r' : '');
-            }
-
-            if ($missing_subtotal > 0.0) {
-                $remaining_amount = wp_strip_all_tags(wc_price($missing_subtotal));
-                $steps[] = 'mangler ' . $remaining_amount;
-            }
-
-            if (!empty($steps)) {
-                $message = 'For å få gratis gave: ' . implode(' og ', $steps) . '.';
-            }
-        }
-
-        if ($message === '') return;
-
-        echo '<div class="ggw-cart-status-line" style="margin:0 0 16px;padding:10px 12px;border-radius:8px;font-size:14px;font-weight:600;' . esc_attr($style) . '">';
-        echo esc_html($message);
-        echo '</div>';
     }
 
     public static function sync_cart_gifts($cart) {
