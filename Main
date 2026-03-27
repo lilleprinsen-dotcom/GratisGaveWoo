@@ -2483,10 +2483,20 @@ GGWJS;
                 $order = wc_get_order($order_id);
                 if (!$order) continue;
 
+                $order_used_campaign = false;
                 foreach ($order->get_items() as $it) {
                     if ($it->get_meta('_ggw_campaign_id') === $campaign_id && $it->get_meta('_ggw_is_gift') === '1') {
-                        $count += max(1, intval($it->get_quantity()));
+                        $order_used_campaign = true;
+                        break;
                     }
+                    if ($it->get_meta('_ggw_trigger_campaign') === $campaign_id) {
+                        $order_used_campaign = true;
+                        break;
+                    }
+                }
+
+                if ($order_used_campaign) {
+                    $count++;
                 }
             }
 
