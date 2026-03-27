@@ -1482,8 +1482,21 @@ GGWJS;
 
     private static function parse_admin_dt($str) {
         if (!$str) return 0;
-        $ts = strtotime($str);
-        return $ts ? $ts : 0;
+
+        $str = trim((string) $str);
+        if ($str === '') return 0;
+
+        $tz = wp_timezone();
+        $formats = array('Y-m-d\TH:i:s', 'Y-m-d\TH:i', 'Y-m-d H:i:s', 'Y-m-d H:i');
+
+        foreach ($formats as $format) {
+            $dt = DateTimeImmutable::createFromFormat($format, $str, $tz);
+            if ($dt instanceof DateTimeImmutable) {
+                return $dt->getTimestamp();
+            }
+        }
+
+        return 0;
     }
 
     private static function campaign_active_now($c) {
