@@ -1930,6 +1930,22 @@ GGWJS;
         return wp_create_nonce('ggw_swap_gift_' . sanitize_text_field((string) $cart_item_key));
     }
 
+    private static function get_swap_debug_enabled() {
+        return (defined('WP_DEBUG') && WP_DEBUG) || !empty($_GET['ggw_swap_debug']);
+    }
+
+    private static function log_swap_debug($message, $context = []) {
+        if (!self::get_swap_debug_enabled() || !function_exists('wc_get_logger')) {
+            return;
+        }
+
+        if (!is_array($context)) {
+            $context = ['extra' => $context];
+        }
+        $context['source'] = 'ggw-free-gift-campaigns';
+        wc_get_logger()->debug((string) $message, $context);
+    }
+
     public static function maybe_handle_swap_gift_action() {
         if (empty($_GET['ggw_action']) || sanitize_text_field(wp_unslash($_GET['ggw_action'])) !== 'swap_gift') return;
 
@@ -1943,6 +1959,11 @@ GGWJS;
         try {
             $gift_key = sanitize_text_field(wp_unslash($_GET['ggw_gift_key'] ?? ''));
             $nonce = sanitize_text_field(wp_unslash($_GET['_wpnonce'] ?? ''));
+            self::log_swap_debug('Incoming swap request.', [
+                'gift_key' => $gift_key,
+                'target_parent_raw' => $_GET['ggw_target_parent_id'] ?? null,
+                'target_variation_raw' => $_GET['ggw_target_variation_id'] ?? null,
+            ]);
             if ($gift_key === '' || !$nonce || !wp_verify_nonce($nonce, 'ggw_swap_gift_' . $gift_key)) {
                 wc_add_notice(__('Kunne ikke bytte gave. Ugyldig forespørsel.', 'ggw'), 'error');
                 wp_safe_redirect(wc_get_cart_url());
@@ -1969,8 +1990,8 @@ GGWJS;
             $current_variation_id = absint($gift_item['variation_id'] ?? 0);
             $slot_index = isset($gift_item['_ggw_slot_index']) ? max(0, intval($gift_item['_ggw_slot_index'])) : null;
 
-            $requested_parent_id = absint($_GET['ggw_target_parent_id'] ?? 0);
-            $requested_variation_id = absint($_GET['ggw_target_variation_id'] ?? 0);
+            $requested_parent_id = absint(wp_unslash($_GET['ggw_target_parent_id'] ?? 0));
+            $requested_variation_id = absint(wp_unslash($_GET['ggw_target_variation_id'] ?? 0));
 
             if ($requested_parent_id > 0) {
                 $new_parent_id = $requested_parent_id;
@@ -1986,6 +2007,29 @@ GGWJS;
                 $new_parent_id = absint($replacement['gift_parent_id'] ?? 0);
                 $new_variation_id = absint($replacement['gift_variation_id'] ?? 0);
             }
+
+            if ($new_variation_id > 0 && $new_parent_id <= 0) {
+                $variation_product = wc_get_product($new_variation_id);
+                if ($variation_product && $variation_product->is_type('variation')) {
+                    $new_parent_id = absint($variation_product->get_parent_id());
+                }
+            }
+            if ($new_variation_id > 0) {
+                $variation_product = wc_get_product($new_variation_id);
+                if (!$variation_product || !$variation_product->is_type('variation') || absint($variation_product->get_parent_id()) !== $new_parent_id) {
+                    wc_add_notice(__('Valgt variant stemmer ikke med valgt gave. Prøv igjen.', 'ggw'), 'error');
+                    wp_safe_redirect(wc_get_cart_url());
+                    exit;
+                }
+            } else {
+                $new_parent_product = wc_get_product($new_parent_id);
+                if ($new_parent_product && $new_parent_product->is_type('variable')) {
+                    wc_add_notice(__('Du må velge variant for denne gaven.', 'ggw'), 'error');
+                    wp_safe_redirect(wc_get_cart_url());
+                    exit;
+                }
+            }
+
             if (!self::validate_gift_choice($campaign, $new_parent_id, $new_variation_id)) {
                 wc_add_notice(__('Valgt gave er ikke tilgjengelig lenger. Prøv igjen.', 'ggw'), 'error');
                 wp_safe_redirect(wc_get_cart_url());
@@ -2029,6 +2073,14 @@ GGWJS;
                 $slot_index
             );
 
+            self::log_swap_debug('Attempting add_to_cart for swap.', [
+                'campaign_id' => $campaign_id,
+                'old_parent_id' => $current_parent_id,
+                'old_variation_id' => $current_variation_id,
+                'new_parent_id' => $new_parent_id,
+                'new_variation_id' => $new_variation_id,
+                'variation_attributes' => $variation_attributes,
+            ]);
             $new_key = $cart->add_to_cart($new_parent_id, 1, $new_variation_id, $variation_attributes, $add_data);
             if (!$new_key) {
                 wc_add_notice(__('Kunne ikke oppdatere gave-linjen. Prøv igjen.', 'ggw'), 'error');
@@ -2053,10 +2105,23 @@ GGWJS;
             if (function_exists('wc_get_logger')) {
                 wc_get_logger()->error(
                     'Swap gift failed: ' . $e->getMessage(),
-                    ['source' => 'ggw-free-gift-campaigns', 'exception' => $e]
+                    [
+                        'source' => 'ggw-free-gift-campaigns',
+                        'exception' => $e,
+                        'trace' => $e->getTraceAsString(),
+                        'request' => [
+                            'ggw_gift_key' => $_GET['ggw_gift_key'] ?? null,
+                            'ggw_target_parent_id' => $_GET['ggw_target_parent_id'] ?? null,
+                            'ggw_target_variation_id' => $_GET['ggw_target_variation_id'] ?? null,
+                        ],
+                    ]
                 );
             }
-            wc_add_notice(__('Kunne ikke bytte gave akkurat nå. Prøv igjen.', 'ggw'), 'error');
+            $friendly_message = __('Kunne ikke bytte gave akkurat nå. Prøv igjen.', 'ggw');
+            if (self::get_swap_debug_enabled()) {
+                $friendly_message .= ' ' . sprintf(__('Feil: %s', 'ggw'), $e->getMessage());
+            }
+            wc_add_notice($friendly_message, 'error');
             wp_safe_redirect(wc_get_cart_url());
             exit;
         }
@@ -3593,6 +3658,7 @@ GGWJS;
             $target_variation_id = absint($choice['gift_variation_id'] ?? 0);
             $label = $product ? $product->get_name() : __('Gavevalg', 'ggw');
             $thumb_html = self::get_swap_choice_thumbnail_html($product);
+            $nonce = self::get_swap_gift_nonce($cart_item_key);
 
             if (!empty($choice['is_variable'])) {
                 $hint = self::get_swap_variation_hint_text($choice['variation_choices'] ?? []);
@@ -3604,11 +3670,7 @@ GGWJS;
                 if ($hint !== '') {
                     $html .= '<p class="ggw-swap-choice__meta">' . esc_html($hint) . '</p>';
                 }
-                $html .= '<form method="get" action="' . esc_url(wc_get_cart_url()) . '" class="ggw-swap-choice__form">';
-                $html .= '<input type="hidden" name="ggw_action" value="swap_gift">';
-                $html .= '<input type="hidden" name="ggw_gift_key" value="' . esc_attr(sanitize_text_field((string) $cart_item_key)) . '">';
-                $html .= '<input type="hidden" name="ggw_target_parent_id" value="' . esc_attr($target_parent_id) . '">';
-                $html .= '<input type="hidden" name="_wpnonce" value="' . esc_attr(self::get_swap_gift_nonce($cart_item_key)) . '">';
+                $html .= '<div class="ggw-swap-choice__form">';
                 $html .= '<label class="ggw-swap-choice__label" for="' . esc_attr($select_id) . '">' . esc_html__('Velg variant', 'ggw') . '</label>';
                 $html .= '<select id="' . esc_attr($select_id) . '" name="ggw_target_variation_id" class="ggw-swap-choice__select" required>';
                 $html .= '<option value="">' . esc_html__('Velg størrelse/variant', 'ggw') . '</option>';
@@ -3621,8 +3683,8 @@ GGWJS;
                     $html .= '<option value="' . esc_attr($variation_id) . '">' . esc_html($variation_label !== '' ? $variation_label : __('Variant', 'ggw')) . '</option>';
                 }
                 $html .= '</select>';
-                $html .= '<button type="submit" class="button alt ggw-swap-choice__btn">' . esc_html__('Bytt til valgt variant', 'ggw') . '</button>';
-                $html .= '</form>';
+                $html .= '<button type="button" class="button alt ggw-swap-choice__btn ggw-swap-choice__btn--variable" data-ggw-swap-url="' . esc_url(wc_get_cart_url()) . '" data-ggw-gift-key="' . esc_attr(sanitize_text_field((string) $cart_item_key)) . '" data-ggw-target-parent-id="' . esc_attr($target_parent_id) . '" data-ggw-nonce="' . esc_attr($nonce) . '" data-ggw-variation-select="#' . esc_attr($select_id) . '">' . esc_html__('Bytt til valgt variant', 'ggw') . '</button>';
+                $html .= '</div>';
                 $html .= '</div>';
                 $html .= '</li>';
                 continue;
@@ -3652,7 +3714,7 @@ GGWJS;
     public static function render_swap_gift_modal_assets() {
         if (!function_exists('is_cart') || (!is_cart() && !(function_exists('is_checkout') && is_checkout()))) return;
         echo '<style>.ggw-swap-modal-wrap{display:block}.ggw-swap-modal-trigger{display:inline-flex;align-items:center;justify-content:center;padding:0;border:0;background:none;color:#2563eb;font:inherit;font-weight:600;text-decoration:underline;cursor:pointer}.ggw-swap-modal-trigger:hover{color:#1d4ed8}.ggw-swap-modal-trigger:focus{outline:none;box-shadow:0 0 0 2px rgba(37,99,235,.22);border-radius:6px}.ggw-swap-modal{position:fixed;inset:0;display:none;z-index:9999}.ggw-swap-modal.is-open{display:grid;place-items:flex-start center;padding:4vh 16px;overflow:auto}.ggw-swap-modal__backdrop{position:fixed;inset:0;background:rgba(15,23,42,.58)}.ggw-swap-modal__panel{position:relative;background:#fff;width:min(760px,96vw);margin:0;border-radius:16px;box-shadow:0 30px 80px rgba(2,6,23,.33);display:flex;flex-direction:column;max-height:90vh;overflow:hidden;isolation:isolate}.ggw-swap-modal__header{padding:20px 24px 14px;border-bottom:1px solid #edf1f6;background:linear-gradient(180deg,#fff 0%,#f9fbff 100%);position:sticky;top:0;z-index:2}.ggw-swap-modal__title{margin:0;font-size:1.2rem;line-height:1.35;font-weight:700;color:#0f172a;padding-right:34px}.ggw-swap-modal__current{margin:8px 0 0;color:#0f172a;font-size:14px}.ggw-swap-modal__subtitle{margin:8px 0 0;color:#475569;font-size:13px;line-height:1.45}.ggw-swap-modal__content{padding:16px 24px 20px;overflow-y:auto;overscroll-behavior:contain}.ggw-swap-choice-list{margin:0;padding:0;list-style:none;display:grid;gap:12px}.ggw-swap-choice{display:grid;grid-template-columns:68px minmax(0,1fr);gap:14px;align-items:start;border:1px solid #e2e8f0;border-radius:12px;background:#fff;padding:12px;transition:border-color .15s ease,box-shadow .15s ease,transform .15s ease}.ggw-swap-choice:hover{border-color:#94a3b8;box-shadow:0 8px 18px rgba(15,23,42,.08)}.ggw-swap-choice:focus-within{border-color:#2563eb;box-shadow:0 0 0 2px rgba(37,99,235,.18)}.ggw-swap-choice__thumb-wrap{display:block}.ggw-swap-choice__thumb{width:64px;height:64px;border-radius:10px;display:block;object-fit:cover;background:#f1f5f9;border:1px solid #e2e8f0}.ggw-swap-choice__body{min-width:0;display:grid;gap:8px}.ggw-swap-choice__name{font-size:15px;line-height:1.4;font-weight:600;color:#0f172a}.ggw-swap-choice__meta{margin:0;color:#64748b;font-size:12px;line-height:1.4}.ggw-swap-choice__form{display:grid;gap:8px}.ggw-swap-choice__label{display:block;font-size:12px;font-weight:600;color:#334155}.ggw-swap-choice__select{width:100%;height:40px;border-radius:10px;border:1px solid #cbd5e1;padding:0 12px;background:#fff;color:#0f172a}.ggw-swap-choice__select:focus{outline:none;border-color:#2563eb;box-shadow:0 0 0 2px rgba(37,99,235,.2)}.ggw-swap-choice__btn.button.alt,.ggw-swap-choice__btn.button{width:100%;text-align:center;display:inline-flex;align-items:center;justify-content:center;min-height:40px;border-radius:10px;font-weight:600;background:#2563eb;border-color:#2563eb;color:#fff;transition:background .15s ease,border-color .15s ease,transform .12s ease}.ggw-swap-choice__btn.button.alt:hover,.ggw-swap-choice__btn.button:hover{background:#1d4ed8;border-color:#1d4ed8;color:#fff;transform:translateY(-1px)}.ggw-swap-choice__btn.button.alt:focus,.ggw-swap-choice__btn.button:focus{outline:none;box-shadow:0 0 0 2px rgba(37,99,235,.22)}.ggw-swap-modal__close{position:absolute;top:12px;right:12px;border:1px solid #d1d5db;background:#fff;font-size:24px;line-height:1;width:36px;height:36px;border-radius:999px;cursor:pointer;color:#475569;display:flex;align-items:center;justify-content:center;z-index:3;transition:background .15s ease,color .15s ease,border-color .15s ease}.ggw-swap-modal__close:hover{background:#f1f5f9;border-color:#94a3b8;color:#0f172a}.ggw-swap-modal__close:focus{outline:none;border-color:#2563eb;box-shadow:0 0 0 2px rgba(37,99,235,.22)}@media (max-width:767px){.ggw-swap-modal.is-open{padding:8px}.ggw-swap-modal__panel{width:100%;max-height:92vh;border-radius:14px}.ggw-swap-modal__header{padding:16px 16px 12px}.ggw-swap-modal__content{padding:12px 16px 16px}.ggw-swap-choice{grid-template-columns:56px minmax(0,1fr);gap:12px;padding:10px}.ggw-swap-choice__thumb{width:56px;height:56px}}</style>';
-        echo '<script>(function(){if(window.__ggwSwapModalReady){return;}window.__ggwSwapModalReady=true;var state={lastTrigger:null};function getFocusable(modal){return Array.prototype.slice.call(modal.querySelectorAll("a[href],button:not([disabled]),textarea,input,select,[tabindex]:not([tabindex=\'-1\'])")).filter(function(el){return !el.hasAttribute("disabled")&&el.getAttribute("aria-hidden")!=="true";});}function closeModal(modal){if(!modal){return;}modal.classList.remove("is-open");modal.setAttribute("aria-hidden","true");if(state.lastTrigger&&typeof state.lastTrigger.focus==="function"){state.lastTrigger.focus();}state.lastTrigger=null;}function openModal(modal,trigger){if(!modal){return;}state.lastTrigger=trigger||null;modal.classList.add("is-open");modal.setAttribute("aria-hidden","false");var panel=modal.querySelector(".ggw-swap-modal__panel");if(panel&&typeof panel.focus==="function"){panel.focus();}}document.addEventListener("click",function(e){var open=e.target.closest(".ggw-open-swap-modal");if(open){e.preventDefault();var id=open.getAttribute("data-ggw-modal-id");var modal=id?document.getElementById(id):null;openModal(modal,open);return;}var closeTrigger=e.target.closest("[data-ggw-modal-close]");if(closeTrigger){closeModal(closeTrigger.closest(".ggw-swap-modal"));}});document.addEventListener("keydown",function(e){var active=document.querySelector(".ggw-swap-modal.is-open");if(!active){return;}if(e.key==="Escape"){e.preventDefault();closeModal(active);return;}if(e.key!=="Tab"){return;}var focusable=getFocusable(active);if(!focusable.length){return;}var first=focusable[0];var last=focusable[focusable.length-1];if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}});})();</script>';
+        echo '<script>(function(){if(window.__ggwSwapModalReady){return;}window.__ggwSwapModalReady=true;var state={lastTrigger:null};function getFocusable(modal){return Array.prototype.slice.call(modal.querySelectorAll("a[href],button:not([disabled]),textarea,input,select,[tabindex]:not([tabindex=\'-1\'])")).filter(function(el){return !el.hasAttribute("disabled")&&el.getAttribute("aria-hidden")!=="true";});}function closeModal(modal){if(!modal){return;}modal.classList.remove("is-open");modal.setAttribute("aria-hidden","true");if(state.lastTrigger&&typeof state.lastTrigger.focus==="function"){state.lastTrigger.focus();}state.lastTrigger=null;}function openModal(modal,trigger){if(!modal){return;}state.lastTrigger=trigger||null;modal.classList.add("is-open");modal.setAttribute("aria-hidden","false");var panel=modal.querySelector(".ggw-swap-modal__panel");if(panel&&typeof panel.focus==="function"){panel.focus();}}function buildSwapUrl(baseUrl,giftKey,parentId,variationId,nonce){var url;try{url=new URL(baseUrl,window.location.origin);}catch(err){url=new URL(window.location.href);url.pathname=baseUrl;}url.searchParams.set("ggw_action","swap_gift");url.searchParams.set("ggw_gift_key",giftKey||"");url.searchParams.set("ggw_target_parent_id",String(parentId||""));if(variationId){url.searchParams.set("ggw_target_variation_id",String(variationId));}else{url.searchParams.delete("ggw_target_variation_id");}url.searchParams.set("_wpnonce",nonce||"");return url.toString();}document.addEventListener("click",function(e){var open=e.target.closest(".ggw-open-swap-modal");if(open){e.preventDefault();var id=open.getAttribute("data-ggw-modal-id");var modal=id?document.getElementById(id):null;openModal(modal,open);return;}var closeTrigger=e.target.closest("[data-ggw-modal-close]");if(closeTrigger){closeModal(closeTrigger.closest(".ggw-swap-modal"));return;}var variableSwapBtn=e.target.closest(".ggw-swap-choice__btn--variable");if(variableSwapBtn){e.preventDefault();var selector=variableSwapBtn.getAttribute("data-ggw-variation-select")||"";var select=selector?document.querySelector(selector):null;var variationId=select?parseInt(select.value,10):0;if(!variationId){window.alert("Velg størrelse/variant først.");if(select&&typeof select.focus==="function"){select.focus();}return;}var baseUrl=variableSwapBtn.getAttribute("data-ggw-swap-url")||window.location.href;var giftKey=variableSwapBtn.getAttribute("data-ggw-gift-key")||"";var parentId=parseInt(variableSwapBtn.getAttribute("data-ggw-target-parent-id")||"0",10)||0;var nonce=variableSwapBtn.getAttribute("data-ggw-nonce")||"";window.location.href=buildSwapUrl(baseUrl,giftKey,parentId,variationId,nonce);}});document.addEventListener("keydown",function(e){var active=document.querySelector(".ggw-swap-modal.is-open");if(!active){return;}if(e.key==="Escape"){e.preventDefault();closeModal(active);return;}if(e.key!=="Tab"){return;}var focusable=getFocusable(active);if(!focusable.length){return;}var first=focusable[0];var last=focusable[focusable.length-1];if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}});})();</script>';
     }
 
     public static function display_cart_item_meta($item_data, $cart_item) {
