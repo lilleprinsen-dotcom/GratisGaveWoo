@@ -2221,6 +2221,17 @@ GGWJS;
             }
 
             $new_item = $cart->cart_contents[$new_key] ?? null;
+            if (!is_array($new_item) && method_exists($cart, 'get_cart')) {
+                $latest_cart_items = $cart->get_cart();
+                $new_item = is_array($latest_cart_items) ? ($latest_cart_items[$new_key] ?? null) : null;
+            }
+            if (!is_array($new_item)) {
+                $new_item = [
+                    'product_id' => $new_parent_id,
+                    'variation_id' => $new_variation_id,
+                    'quantity' => 1,
+                ] + (is_array($add_data) ? $add_data : []);
+            }
             [$new_item_valid, $new_item] = self::hydrate_cart_item_product_data($new_item, $new_key, $cart);
             if (!$new_item_valid) {
                 $cart->remove_cart_item($new_key);
