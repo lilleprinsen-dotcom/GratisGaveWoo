@@ -3328,12 +3328,17 @@ GGWJS;
         $missing = [];
         $triggers_by_campaign = [];
         $gift_count_by_campaign = [];
+        $present_slot_indexes_by_campaign = [];
 
         foreach ($cart->get_cart() as $cart_item_key => $item) {
             if (self::cart_item_is_gift($item)) {
                 $cid = $item['_ggw_campaign_id'] ?? '';
                 if ($cid) {
                     $gift_count_by_campaign[$cid] = ($gift_count_by_campaign[$cid] ?? 0) + max(1, intval($item['quantity'] ?? 1));
+                    if (isset($item['_ggw_slot_index'])) {
+                        $slot_index = max(0, intval($item['_ggw_slot_index']));
+                        $present_slot_indexes_by_campaign[$cid][$slot_index] = true;
+                    }
                 }
                 continue;
             }
@@ -3375,8 +3380,32 @@ GGWJS;
             if (empty($gifts)) continue;
 
             $missing_count = max(1, $entitled_total - $gift_count);
+            $missing_slots = range(0, max(0, $missing_count - 1));
+            if (self::sanitize_gift_chooser_mode($c['gift_chooser_mode'] ?? 'classic') === 'progressive') {
+                $present_slots = array_keys((array) ($present_slot_indexes_by_campaign[$cid] ?? []));
+                $present_slots = array_values(array_unique(array_map('intval', $present_slots)));
+                sort($present_slots, SORT_NUMERIC);
+
+                $candidate_slots = [];
+                for ($slot = 0; $slot < $entitled_total; $slot++) {
+                    if (!in_array($slot, $present_slots, true)) {
+                        $candidate_slots[] = $slot;
+                    }
+                }
+                $missing_slots = array_slice($candidate_slots, 0, $missing_count);
+                if (count($missing_slots) < $missing_count) {
+                    $next_slot = $entitled_total;
+                    while (count($missing_slots) < $missing_count) {
+                        if (!in_array($next_slot, $present_slots, true) && !in_array($next_slot, $missing_slots, true)) {
+                            $missing_slots[] = $next_slot;
+                        }
+                        $next_slot++;
+                    }
+                }
+            }
+
             $slot_gifts = [];
-            for ($slot = 0; $slot < $missing_count; $slot++) {
+            foreach ($missing_slots as $slot) {
                 $allowed = self::campaign_allowed_gift_ids_for_slot($c, $slot);
                 $slot_gifts[$slot] = array_values(array_filter($gifts, function($gift_id) use ($allowed) {
                     return in_array($gift_id, $allowed, true);
@@ -3390,6 +3419,7 @@ GGWJS;
                 'campaign' => $c,
                 'gifts' => $gifts,
                 'slot_gifts' => $slot_gifts,
+                'missing_slots' => $missing_slots,
                 'mode' => self::sanitize_gift_chooser_mode($c['gift_chooser_mode'] ?? 'classic'),
                 'missing_count' => $missing_count,
                 'trigger_key' => strval(reset($row['trigger_keys']) ?: ''),
@@ -3410,17 +3440,18 @@ GGWJS;
         foreach ($missing as $cid => $row) {
             $c = $row['campaign'];
             $missing_count = max(1, intval($row['missing_count'] ?? 1));
+            $missing_slots = array_values(array_map('intval', (array) ($row['missing_slots'] ?? range(0, max(0, $missing_count - 1)))));
             echo '<p style="margin:8px 0 4px;"><strong>' . esc_html($c['title']) . '</strong> (' . sprintf(esc_html__('%d gave(r) gjenstår', 'ggw'), $missing_count) . ')</p>';
             if (($row['mode'] ?? 'classic') === 'progressive') {
                 echo '<p style="font-size:12px;color:#374151;margin:0 0 6px;">Fullfør gavevalg per steg for å fullføre kjøpet trygt.</p>';
             } else {
                 echo '<p style="font-size:12px;color:#374151;margin:0 0 6px;">Velg ' . intval($missing_count) . ' gave(r) for å fullføre kjøpet trygt.</p>';
             }
-            for ($slot = 0; $slot < $missing_count; $slot++) {
+            foreach ($missing_slots as $display_index => $slot) {
                 $slot_number = $slot + 1;
                 echo '<div class="ggw-checkout-choice-slot" style="margin:8px 0;padding:8px;border:1px dashed #e5e7eb;border-radius:6px;">';
                 $slot_gifts = $row['slot_gifts'][$slot] ?? $row['gifts'];
-                $slot_label = (($row['mode'] ?? 'classic') === 'progressive') ? ('Steg ' . intval($slot_number)) : ('Gavevalg ' . intval($slot_number));
+                $slot_label = (($row['mode'] ?? 'classic') === 'progressive') ? ('Steg ' . intval($slot_number)) : ('Gavevalg ' . intval($display_index + 1));
                 echo '<div style="font-size:12px;font-weight:600;margin-bottom:4px;">' . esc_html($slot_label) . '</div>';
                 foreach ($slot_gifts as $gid) {
                     $gp = wc_get_product($gid);
@@ -3461,8 +3492,9 @@ GGWJS;
 
         foreach ($missing as $cid => $row) {
             $required = max(1, intval($row['missing_count'] ?? 1));
+            $missing_slots = array_values(array_map('intval', (array) ($row['missing_slots'] ?? range(0, max(0, $required - 1)))));
             $planned_counts = [];
-            for ($slot = 0; $slot < $required; $slot++) {
+            foreach ($missing_slots as $slot) {
                 $gift = absint($posted[$cid][$slot] ?? 0);
                 $slot_variations = $posted_variations[$cid][$slot] ?? [];
                 if (!is_array($slot_variations)) $slot_variations = [];
@@ -3518,10 +3550,11 @@ GGWJS;
             if (!is_array($choices)) $choices = [$choices];
             $row = $missing[$cid];
             $required = max(1, intval($row['missing_count'] ?? 1));
+            $missing_slots = array_values(array_map('intval', (array) ($row['missing_slots'] ?? range(0, max(0, $required - 1)))));
 
             $selected_for_campaign = [];
             $planned_counts = [];
-            for ($slot = 0; $slot < $required; $slot++) {
+            foreach ($missing_slots as $slot) {
                 $gift_parent_id = absint($choices[$slot] ?? 0);
                 $slot_variations = $posted_variations[$cid][$slot] ?? [];
                 if (!is_array($slot_variations)) $slot_variations = [];
